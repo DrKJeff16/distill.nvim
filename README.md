@@ -13,9 +13,10 @@ changing the rest of your folding setup.
 - Preserves your existing `expr` folds for functions, classes, and blocks.
 - Composes with Treesitter folds, LSP folds, and
   [nvim-origami](https://github.com/chrisgrieser/nvim-origami).
-- Supports Python logging calls out of the box.
-- Optionally folds plain debug-print calls such as Python's `print(...)` and
-  `pprint(...)`.
+- Supports logging calls out of the box for Python, Go, JavaScript, TypeScript,
+  Rust, C++, Zig, Ruby, Java, PHP, Swift, Lua, and Dart.
+- Optionally folds plain debug-print calls such as Python's `print(...)`,
+  JavaScript's `console.log(...)`, and Rust's `println!(...)`.
 - Lets you choose the minimum folded region size, so lone one-line calls can stay
   visible while adjacent logging blocks still fold.
 - Supports custom languages and logging APIs with Lua patterns.
@@ -33,7 +34,11 @@ replacing it.
 ```lua
 {
   "markosnarinian/fold-logging.nvim",
-  ft = { "python" },
+  ft = {
+    "python", "go", "javascript", "javascriptreact", "typescript",
+    "typescriptreact", "rust", "cpp", "zig", "ruby", "java", "php",
+    "swift", "lua", "dart",
+  },
   cmd = {
     "FLFold",
     "FLUnfold",
@@ -48,7 +53,9 @@ replacing it.
 ```
 
 Add each configured language to `ft` so lazy.nvim loads the plugin for that
-filetype.
+filetype. Each language also needs its Treesitter parser installed (for example
+with `:TSInstall rust`); without one the plugin falls back to a line-based
+heuristic that handles simple, single-call-per-line cases.
 
 ## Usage
 
@@ -77,26 +84,7 @@ Pass options through `opts` (or `require("fold-logging").setup{}`). Defaults:
   fold_print = false,
   min_lines = 2,
   base_foldexpr = nil,
-  languages = {
-    python = {
-      call_node_types = { "call" },
-      patterns = {
-        "%.debug$",
-        "%.info$",
-        "%.warning$",
-        "%.warn$",
-        "%.error$",
-        "%.critical$",
-        "%.exception$",
-        "%.fatal$",
-        "%.log$",
-      },
-      print_patterns = {
-        "^print$",
-        "^pprint$",
-      },
-    },
-  },
+  languages = {}, -- merged over the built-in specs below
 }
 ```
 
@@ -105,7 +93,8 @@ Pass options through `opts` (or `require("fold-logging").setup{}`). Defaults:
 - `auto_fold` — Fold logging statements automatically when a supported file
   opens, and fold newly added logging statements when the file is written. When
   `false`, folds are only created/closed via the commands or the API.
-- `fold_print` — Also fold plain debug-print calls (Python's `print` / `pprint`).
+- `fold_print` — Also fold plain debug-print calls (Python's `print` / `pprint`,
+  JavaScript's `console.log`, Rust's `println!`, ...).
   Logging-level calls fold regardless; this just adds the print family.
 - `min_lines` — Minimum number of lines a (merged) logging region must span to be
   folded. `2` skips lone one-line calls by default while still folding adjacent
@@ -118,18 +107,33 @@ Pass options through `opts` (or `require("fold-logging").setup{}`). Defaults:
   Each spec defines Treesitter call node types, always-active logging patterns,
   and optional `print_patterns` used only when `fold_print = true`. See
   [Adding a language](#adding-a-language).
+- `fold_print` and `min_lines` apply to every language.
 
 ### What gets folded
 
-For Python, the built-in rules fold any call ending in a standard log level:
-`.debug`, `.info`, `.warning`, `.warn`, `.error`, `.critical`, `.exception`,
-`.fatal`, `.log` (so `logging.info(...)`, `logger.debug(...)`,
-`self.logger.warning(...)`, …).
+Detection is chosen by the buffer's `filetype`. Logging calls always fold; the
+print-style calls in the last column only fold when `fold_print = true`.
 
-`print(...)` and `pprint(...)` are only folded when `fold_print = true`.
+| Filetype                                                      | Logging calls (always)                                                                                   | Print-style (`fold_print`)                    |
+| ------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- | --------------------------------------------- |
+| `python`                                                      | `.debug` `.info` `.warning` `.warn` `.error` `.critical` `.exception` `.fatal` `.log`                   | `print` `pprint`                              |
+| `go`                                                          | `.Debug` `.Info` `.Warn` `.Error` `.Fatal` `.Panic` `.Trace` (+ `f` `ln` `w` `Context`), `.Msg`, `log.Print*` | `fmt.Print*` `fmt.Fprint*` `print` `println`  |
+| `javascript` `javascriptreact` `typescript` `typescriptreact` | `.debug` `.info` `.warn` `.error` `.trace` `.fatal` (`console.*`, winston, pino, ...)                   | `console.log` `console.dir` `console.table`   |
+| `rust`                                                        | `trace!` `debug!` `info!` `warn!` `error!` `log!` `event!`, also path-qualified (`log::info!`)          | `println!` `print!` `eprintln!` `eprint!` `dbg!` |
+| `cpp`                                                         | `.info` etc. (spdlog), `LOG(...)` `DLOG` `VLOG`, `qDebug()` and other stream-style `<<` logging, `LOG_*` `SPDLOG_*` | `std::cout <<` `std::cerr <<` `printf` `std::println` |
+| `zig`                                                         | `.debug` `.info` `.warn` `.err` (`std.log`, scoped loggers)                                              | `std.debug.print`                             |
+| `ruby`                                                        | `.debug` `.info` `.warn` `.error` `.fatal` `.unknown`, `warn`                                            | `puts` `print` `p` `pp`                       |
+| `java`                                                        | `.trace` `.debug` `.info` `.warn` `.error` `.fatal` `.severe` `.fine*`, Android `Log.d/i/w/e/v`, `Timber` | `System.out.print*` `System.err.print*` `.printStackTrace` |
+| `php`                                                         | `->debug` `->info` `->warning` `->error` ... `Log::info`, `->log`, `error_log`                           | `var_dump` `print_r` `dump` `dd`              |
+| `swift`                                                       | `.debug` `.info` `.notice` `.warning` `.error` `.fault` `.log`, `NSLog`, `os_log`, `DDLog*`             | `print` `debugPrint` `dump`                   |
+| `lua`                                                         | `.debug` `.info` `.warn` `.error` `.trace` `.fatal` (`log.info`, `logger:debug`)                         | `print` `vim.print` `vim.notify`              |
+| `dart`                                                        | `.debug` `.info` `.warning` `.severe` ..., `logger.d/i/w/e`, `developer.log`, `log`                      | `print` `debugPrint`                          |
 
-Setup calls such as `logging.basicConfig(...)` and `logging.getLogger(...)` are
-never folded.
+Logging patterns match on the method name, so `logging.info(...)`,
+`logger.debug(...)` and `self.logger.warning(...)` all fold, while setup calls
+such as `logging.basicConfig(...)` and `logging.getLogger(...)` never do. Calls
+with no arguments are ignored for Go, JavaScript/TypeScript, C++, Zig, and PHP,
+so accessors like Go's `err.Error()` are not mistaken for log calls.
 
 ### Adding a language
 
@@ -138,6 +142,12 @@ Languages are keyed by Neovim filetype. A language spec contains:
 - `call_node_types`: Treesitter node types that represent calls
 - `patterns`: Lua patterns matched against the called function name
 - `print_patterns` (optional): extra patterns folded only when `fold_print = true`
+- `require_args` (optional): ignore calls with an empty argument list
+- `callee` (optional): `function(node, bufnr) -> string|nil` returning the callee
+  text for grammars where a call is not a plain call node. Only needed for
+  unusual shapes; the built-in extractor handles `function`, `macro`, `method`
+  and `name` fields (see `lua/fold-logging/callee.lua`, which also has the C++
+  stream and Dart implementations).
 
 ```lua
 opts = {
@@ -151,9 +161,24 @@ opts = {
 ```
 
 Patterns match the callee text, not the full source line. For example,
-`"%.Info$"` matches `log.Info(...)` and `logger.Info(...)`.
+`"%.Info$"` matches `log.Info(...)` and `logger.Info(...)`. Member accessors keep
+their source separator (`.`, `::`, `->`), so use `"[%.:>]info$"` to match all
+three.
 
-Use `:InspectTree` to find the call node type for a language.
+Use `:InspectTree` to find the call node type for a language. Built-in specs are
+overridden per key, so `languages = { go = { patterns = { ... } } }` replaces
+Go's built-in `patterns` list entirely.
+
+### Tests
+
+```sh
+nvim --headless -u NORC -c "luafile tests/run.lua"        # Python + folding behavior
+nvim --headless -u NORC -c "luafile tests/languages.lua"  # every built-in language
+```
+
+`tests/languages.lua` skips a language whose parser is not installed. Set
+`FOLD_LOGGING_PARSERS` to a directory of `<lang>.so` files to test parsers
+outside your runtimepath.
 
 ## API
 

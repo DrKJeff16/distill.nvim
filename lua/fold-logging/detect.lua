@@ -1,4 +1,5 @@
 local config = require("fold-logging.config")
+local callee = require("fold-logging.callee")
 
 local M = {}
 
@@ -16,14 +17,12 @@ local function matches(text, patterns)
   return false
 end
 
--- Text of the function being called for a treesitter call node, e.g.
--- "print", "logging.info", "self.logger.warning".
-local function callee_text(node, bufnr)
-  local fn = node:field("function")[1] or node:named_child(0)
-  if not fn then
-    return nil
-  end
-  return vim.treesitter.get_node_text(fn, bufnr)
+-- True for a call written with an empty argument list, e.g. `err.Error()`.
+-- Grammars without an `arguments` field (macros, Ruby's paren-less calls) never
+-- count as empty.
+local function has_no_args(node)
+  local args = node:field("arguments")[1]
+  return args ~= nil and args:named_child_count() == 0
 end
 
 -- Treesitter backend. Returns a list of regions, or nil if no parser/query.
@@ -50,10 +49,11 @@ function M.treesitter(bufnr, spec, lang)
     return nil
   end
 
+  local get_callee = spec.callee or callee.default
   local out = {}
   for _, node in query:iter_captures(root, bufnr, 0, -1) do
-    local txt = callee_text(node, bufnr)
-    if matches(txt, spec.patterns) then
+    local txt = get_callee(node, bufnr)
+    if matches(txt, spec.patterns) and not (spec.require_args and has_no_args(node)) then
       local sr, _, er, ec = node:range()
       -- treesitter end position is exclusive; if it lands on column 0 the call
       -- really ends on the previous line.
@@ -90,9 +90,12 @@ function M.fallback(bufnr, spec)
   local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
   local out = {}
   for i, line in ipairs(lines) do
-    for callee in line:gmatch("([%w_%.]+)%s*%(") do
-      if matches(callee, spec.patterns) then
-        out[#out + 1] = { start = i, ["end"] = balanced_end(lines, i), text = callee }
+    -- Callee characters: identifiers plus the separators `.`, `::`, `->`, the
+    -- PHP `$` sigil and the Rust macro `!` (dropped before matching).
+    for name in line:gmatch("([%w_%.:>%-%$!]+)%s*%(") do
+      name = name:gsub("!$", "")
+      if matches(name, spec.patterns) then
+        out[#out + 1] = { start = i, ["end"] = balanced_end(lines, i), text = name }
         break
       end
     end
@@ -128,7 +131,12 @@ local function effective_spec(spec)
   if config.options.fold_print and spec.print_patterns then
     vim.list_extend(patterns, spec.print_patterns)
   end
-  return { call_node_types = spec.call_node_types, patterns = patterns }
+  return {
+    call_node_types = spec.call_node_types,
+    patterns = patterns,
+    callee = spec.callee,
+    require_args = spec.require_args,
+  }
 end
 
 -- Public: detect logging regions in `bufnr`. Returns normalized outermost
