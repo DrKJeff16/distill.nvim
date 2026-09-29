@@ -190,24 +190,6 @@ Pass options through `opts` (or `require("distill").setup{}`). Defaults:
   Each spec defines Treesitter call node types and hierarchical group rules. See
   [Adding a language](#adding-a-language).
 
-### Migrating from `fold_print`
-
-`fold_print` no longer exists. Its closest replacement is:
-
-```lua
-groups = { output = true }
-```
-
-The new `output` family is broader than the old option: it includes configured
-prints, dumps, stack output, notifications, and debugger calls. To retain a
-narrow print-only setup, enable only that subgroup:
-
-```lua
-groups = {
-  output = { enabled = false, print = true },
-}
-```
-
 ### What gets folded
 
 Detection is chosen by the buffer's `filetype`. This is the complete built-in
