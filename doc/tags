@@ -1,0 +1,14 @@
+:DistillConfig	distill.txt	/*:DistillConfig*
+:DistillDisable	distill.txt	/*:DistillDisable*
+:DistillEnable	distill.txt	/*:DistillEnable*
+:DistillFold	distill.txt	/*:DistillFold*
+:DistillList	distill.txt	/*:DistillList*
+:DistillRefresh	distill.txt	/*:DistillRefresh*
+:DistillToggle	distill.txt	/*:DistillToggle*
+:DistillUnfold	distill.txt	/*:DistillUnfold*
+distill-api	distill.txt	/*distill-api*
+distill-commands	distill.txt	/*distill-commands*
+distill-contents	distill.txt	/*distill-contents*
+distill-options	distill.txt	/*distill-options*
+distill-setup	distill.txt	/*distill-setup*
+distill.txt	distill.txt	/*distill.txt*

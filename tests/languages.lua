@@ -2,8 +2,8 @@
 --   nvim --headless -u NORC -c "luafile tests/languages.lua"
 --
 -- Each fixture in tests/fixtures/ marks the lines that must be detected:
---   @log    detected always
---   @print  detected only with `fold_print = true`
+--   @log    detected by the default logging group
+--   @print  detected only with the output group enabled
 -- Every unmarked call is a negative control (e.g. `err.Error()`, `Math.log`).
 --
 -- A language is SKIPPED when its Treesitter parser is not installed. To test
@@ -101,12 +101,14 @@ for _, case in ipairs(cases) do
         end
       end
       if next(missing) or next(extra) then
-        fail(("%s (%s): missing lines {%s}, unexpected lines {%s}"):format(
-          ft,
-          label,
-          table.concat(sorted_keys(missing), ","),
-          table.concat(sorted_keys(extra), ",")
-        ))
+        fail(
+          ("%s (%s): missing lines {%s}, unexpected lines {%s}"):format(
+            ft,
+            label,
+            table.concat(sorted_keys(missing), ","),
+            table.concat(sorted_keys(extra), ",")
+          )
+        )
       else
         print(("ok   - %s (%s): %d region(s)"):format(ft, label, #sorted_keys(expected)))
       end
@@ -114,16 +116,16 @@ for _, case in ipairs(cases) do
 
     -- Guard against silently testing the regex fallback instead of Treesitter.
     local spec = config.options.languages[ft]
-    if detect.treesitter(buf, { call_node_types = spec.call_node_types, patterns = {} }, lang) == nil then
+    if detect.treesitter(buf, { call_node_types = spec.call_node_types, entries = {} }, lang) == nil then
       fail(ft .. ": Treesitter backend unavailable")
     end
 
-    config.options.fold_print = false
-    compare("fold_print=false", log)
+    config.options.groups.output = false
+    compare("output=false", log)
 
-    config.options.fold_print = true
-    compare("fold_print=true", vim.tbl_extend("force", log, print_))
-    config.options.fold_print = false
+    config.options.groups.output = true
+    compare("output=true", vim.tbl_extend("force", log, print_))
+    config.options.groups.output = false
   end
 end
 

@@ -1,0 +1,151 @@
+*distill.txt*               Fold noisy diagnostics without replacing your folds
+
+==============================================================================
+CONTENTS                                                        *distill-contents*
+
+1. Setup ......................................................... |distill-setup|
+2. Commands .................................................... |distill-commands|
+3. Configuration .............................................. |distill-options|
+4. Lua API .......................................................... |distill-api|
+
+==============================================================================
+SETUP                                                              *distill-setup*
+
+Distill requires Neovim 0.10 or newer. With lazy.nvim:
+>
+  {
+    "markosnarinian/distill.nvim",
+    ft = { "python", "go", "javascript", "typescript", "rust", "lua" },
+    opts = {},
+  }
+<
+Add every configured filetype to `ft`. Distill uses Treesitter when available
+and a line-based detector otherwise. Run `:checkhealth distill` to inspect the
+current buffer's parser and folding configuration.
+
+==============================================================================
+COMMANDS                                                        *distill-commands*
+
+                                                      *:DistillFold*
+:DistillFold          Close configured folds in the current buffer.
+
+                                                      *:DistillUnfold*
+:DistillUnfold        Open configured folds in the current buffer.
+
+                                                      *:DistillToggle*
+:DistillToggle        Toggle configured folds based on their actual state.
+
+                                                      *:DistillRefresh*
+:DistillRefresh       Recompute configured folds after edits.
+
+                                                      *:DistillList*
+:DistillList          Put detected calls in the quickfix list.
+
+                                                      *:DistillConfig*
+:DistillConfig        Configure groups, subgroups, and levels for the current
+                      filetype. Changes apply immediately for this session.
+
+                                                      *:DistillEnable*
+:DistillEnable        Enable Distill and attach to visible supported buffers.
+
+                                                      *:DistillDisable*
+:DistillDisable       Disable Distill and restore prior window folding options.
+
+==============================================================================
+CONFIGURATION                                                  *distill-options*
+
+Pass options to `require("distill").setup()` or a plugin manager's `opts`:
+>
+  {
+    enable = true,
+    auto_fold = true,
+    groups = {
+      logging = true,
+      output = false,
+      tracing = false,
+      control = false,
+    },
+    language_groups = {},
+    min_lines = 2,
+    base_foldexpr = nil,
+    keymaps = {
+      fold = "<leader>df",
+      unfold = "<leader>du",
+      toggle = "<leader>dt",
+      refresh = "<leader>dr",
+      list = "<leader>dl",
+      config = "<leader>dc",
+    },
+    languages = {},
+  }
+<
+`enable`             Start attached. When false, action commands are no-ops;
+                     `:DistillEnable` remains available.
+
+`auto_fold`          Close configured calls on open and newly added calls on
+                     write.
+
+`groups`             Global family defaults. Values can be booleans or nested
+                     tables with an `enabled` fallback, subgroup overrides, and
+                     level overrides. For example: >
+                       groups = {
+                         logging = {
+                           enabled = true,
+                           levels = { trace = false },
+                         },
+                         output = { enabled = false, print = true },
+                       }
+<
+`language_groups`    Per-filetype overrides in the same format: >
+                       language_groups = {
+                         python = { output = { print = true } },
+                       }
+<
+                     `:DistillConfig` edits this table at runtime. Its reset
+                     entry removes the current filetype's overrides.
+
+`min_lines`          Positive integer minimum for a merged logging region.
+
+`base_foldexpr`      Lua `function(lnum)` producing the underlying fold level.
+                     Native LSP and Treesitter expressions are detected. Supply
+                     this option for any other custom fold expression.
+
+`keymaps`            Default normal mappings. Use false to disable all, or set
+                     one action to false. Existing user mappings are never
+                     overwritten. Distill removes only mappings it installed.
+
+`languages`          Specs deep-merged over built-ins. A spec has
+                     `call_node_types`, hierarchical `groups`, optional
+                     `require_args`, and optional `callee`. Group rules live at
+                     `family -> subgroup -> level` and contain `patterns`.
+
+The built-in families are:
+
+`logging`            Levels and logging frameworks. Enabled by default.
+
+`output`             Prints, dumps, notifications, stack output, and debugger
+                     calls. Disabled by default.
+
+`tracing`            Events, spans, timing, profiling, and signposts. Disabled
+                     by default.
+
+`control`            Assertions, panics, traps, and termination. Disabled by
+                     default because hiding these may obscure program behavior.
+
+See the README's "What gets folded" table for the full per-language catalog.
+
+==============================================================================
+LUA API                                                          *distill-api*
+
+  require("distill").setup(opts)
+  require("distill").fold([bufnr])
+  require("distill").unfold([bufnr])
+  require("distill").toggle([bufnr])
+  require("distill").refresh([bufnr])
+  require("distill").list([bufnr])
+  require("distill").config([bufnr])
+  require("distill").detect([bufnr])
+  require("distill").enable()
+  require("distill").disable()
+
+vim:tw=78:ts=8:noet:ft=help:norl:

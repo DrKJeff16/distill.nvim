@@ -17,6 +17,15 @@ local function matches(text, patterns)
   return false
 end
 
+local function matching_entry(text, entries)
+  for _, entry in ipairs(entries or {}) do
+    if matches(text, entry.patterns) then
+      return entry
+    end
+  end
+  return nil
+end
+
 -- True for a call written with an empty argument list, e.g. `err.Error()`.
 -- Grammars without an `arguments` field (macros, Ruby's paren-less calls) never
 -- count as empty.
@@ -53,14 +62,23 @@ function M.treesitter(bufnr, spec, lang)
   local out = {}
   for _, node in query:iter_captures(root, bufnr, 0, -1) do
     local txt = get_callee(node, bufnr)
-    if matches(txt, spec.patterns) and not (spec.require_args and has_no_args(node)) then
+    local entry = matching_entry(txt, spec.entries)
+    local require_args = entry and entry.require_args
+    if entry and not (require_args and has_no_args(node)) then
       local sr, _, er, ec = node:range()
       -- treesitter end position is exclusive; if it lands on column 0 the call
       -- really ends on the previous line.
       if ec == 0 and er > sr then
         er = er - 1
       end
-      out[#out + 1] = { start = sr + 1, ["end"] = er + 1, text = vim.trim(txt or "") }
+      out[#out + 1] = {
+        start = sr + 1,
+        ["end"] = er + 1,
+        text = vim.trim(txt or ""),
+        group = entry.group,
+        subgroup = entry.subgroup,
+        level = entry.level,
+      }
     end
   end
   return out
@@ -92,10 +110,19 @@ function M.fallback(bufnr, spec)
   for i, line in ipairs(lines) do
     -- Callee characters: identifiers plus the separators `.`, `::`, `->`, the
     -- PHP `$` sigil and the Rust macro `!` (dropped before matching).
-    for name in line:gmatch("([%w_%.:>%-%$!]+)%s*%(") do
+    for name, args_start in line:gmatch("([%w_%.:>%-%$!]+)%s*%(()") do
       name = name:gsub("!$", "")
-      if matches(name, spec.patterns) then
-        out[#out + 1] = { start = i, ["end"] = balanced_end(lines, i), text = name }
+      local has_args = not line:sub(args_start):find("^%s*%)")
+      local entry = matching_entry(name, spec.entries)
+      if entry and not (entry.require_args and not has_args) then
+        out[#out + 1] = {
+          start = i,
+          ["end"] = balanced_end(lines, i),
+          text = name,
+          group = entry.group,
+          subgroup = entry.subgroup,
+          level = entry.level,
+        }
         break
       end
     end
@@ -124,20 +151,31 @@ local function normalize(regions)
   return out
 end
 
--- The patterns active for a spec: always `patterns`, plus `print_patterns` when
--- the `fold_print` option is enabled.
-local function effective_spec(spec)
-  local patterns = vim.deepcopy(spec.patterns or {})
-  if config.options.fold_print and spec.print_patterns then
-    vim.list_extend(patterns, spec.print_patterns)
+local function effective_spec(spec, filetype)
+  local entries = {}
+  for group, subgroups in pairs(spec.groups or {}) do
+    for subgroup, levels in pairs(subgroups) do
+      for level, entry in pairs(levels) do
+        if config.group_enabled(filetype, { group, subgroup, level }) then
+          entries[#entries + 1] = {
+            patterns = entry.patterns or {},
+            require_args = entry.require_args ~= nil and entry.require_args or spec.require_args,
+            group = group,
+            subgroup = subgroup,
+            level = level,
+          }
+        end
+      end
+    end
   end
   return {
     call_node_types = spec.call_node_types,
-    patterns = patterns,
+    entries = entries,
     callee = spec.callee,
-    require_args = spec.require_args,
   }
 end
+
+M._effective_spec = effective_spec
 
 -- Public: detect logging regions in `bufnr`. Returns normalized outermost
 -- regions sorted by start line.
@@ -148,7 +186,7 @@ function M.detect(bufnr)
   if not spec then
     return {}
   end
-  spec = effective_spec(spec)
+  spec = effective_spec(spec, ft)
   local lang = vim.treesitter.language.get_lang(ft) or ft
   local regions = M.treesitter(bufnr, spec, lang)
   if not regions then

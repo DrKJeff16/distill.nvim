@@ -17,7 +17,7 @@ local function check(name, cond, extra)
   end
 end
 
-require("distill").setup({ auto_fold = true, fold_print = true })
+require("distill").setup({ auto_fold = true, groups = { output = true } })
 local config = require("distill.config")
 
 -- ---- Default keymaps ------------------------------------------------------
@@ -27,9 +27,14 @@ for action, lhs in pairs({
   toggle = "<leader>dt",
   refresh = "<leader>dr",
   list = "<leader>dl",
+  config = "<leader>dc",
 }) do
   local map = vim.fn.maparg(lhs, "n", false, true)
-  check("keymap: " .. action, map.rhs == "<cmd>Distill" .. action:sub(1, 1):upper() .. action:sub(2) .. "<cr>", vim.inspect(map))
+  check(
+    "keymap: " .. action,
+    map.rhs == "<cmd>Distill" .. action:sub(1, 1):upper() .. action:sub(2) .. "<cr>",
+    vim.inspect(map)
+  )
 end
 
 -- Simulate a foldexpr-based general-folding setup (as origami/treesitter give).
@@ -62,6 +67,15 @@ check("py: detects multi-line logger.debug", starts[7] == 11, vim.inspect(region
 check("py: detects print()", starts[15] ~= nil, vim.inspect(regions))
 -- logging.info on line 16
 check("py: detects logging.info", starts[16] ~= nil, vim.inspect(regions))
+local by_start = {}
+for _, region in ipairs(regions) do
+  by_start[region.start] = region
+end
+check(
+  "py: detection identifies its group path",
+  by_start[15].group == "output" and by_start[15].subgroup == "print" and by_start[15].level == "builtin",
+  vim.inspect(by_start[15])
+)
 -- three consecutive print() calls (lines 21..23)
 check("py: detects first chatty print", starts[21] ~= nil, vim.inspect(regions))
 -- it should NOT fold the function/return/import lines
@@ -69,19 +83,18 @@ check("py: does not flag import", starts[1] == nil)
 -- it should NOT flag logging setup calls (basicConfig / getLogger), only levels
 check("py: does not flag logging.getLogger setup", starts[3] == nil, vim.inspect(regions))
 
--- fold_print toggle: print(...) is only detected when fold_print is enabled
-config.options.fold_print = false
+-- Group toggle: print(...) is only detected when the output group is enabled.
+config.options.groups.output = false
 local noprint = {}
 for _, r in ipairs(detect.detect(buf)) do
   noprint[r.start] = r["end"]
 end
-check("fold_print=false: print(15) NOT detected", noprint[15] == nil, vim.inspect(noprint))
-check("fold_print=false: logging.info(16) still detected", noprint[16] ~= nil, vim.inspect(noprint))
-config.options.fold_print = true
+check("output=false: print(15) NOT detected", noprint[15] == nil, vim.inspect(noprint))
+check("output=false: logging.info(16) still detected", noprint[16] ~= nil, vim.inspect(noprint))
+config.options.groups.output = true
 
 -- ---- Folding behaviour ----------------------------------------------------
-require("distill.fold")._recompute(buf)
-local cache = require("distill.fold")._cache[buf]
+local cache = require("distill.fold")._recompute(buf)
 -- merged debug block stays its own fold; the 3 consecutive prints merge to 22..24
 local function has_region(s, e)
   for _, r in ipairs(cache.regions) do
@@ -104,7 +117,11 @@ end)
 local win = vim.api.nvim_get_current_win()
 vim.api.nvim_win_call(win, function()
   check("autofold: logger.debug fold is closed", vim.fn.foldclosed(7) == 7, "foldclosed(7)=" .. vim.fn.foldclosed(7))
-  check("autofold: function body line not folded away", vim.fn.foldclosed(13) == -1, "foldclosed(13)=" .. vim.fn.foldclosed(13))
+  check(
+    "autofold: function body line not folded away",
+    vim.fn.foldclosed(13) == -1,
+    "foldclosed(13)=" .. vim.fn.foldclosed(13)
+  )
 end)
 
 -- Unfold then re-fold via the API.
@@ -140,15 +157,16 @@ require("distill").fold(buf)
 -- ---- Base composition preserved -------------------------------------------
 -- A non-logging line must return exactly the base foldexpr value.
 local base_val = vim.treesitter.foldexpr(6) -- def compute(...) line
-require("distill.fold")._recompute(buf)
-local ours_val = require("distill.fold")._cache[buf].result[6]
-check("compose: non-logging line keeps base foldexpr value", tostring(ours_val) == tostring(base_val), ("base=%s ours=%s"):format(tostring(base_val), tostring(ours_val)))
+local ours_val = require("distill.fold")._recompute(buf).result[6]
+check(
+  "compose: non-logging line keeps base foldexpr value",
+  tostring(ours_val) == tostring(base_val),
+  ("base=%s ours=%s"):format(tostring(base_val), tostring(ours_val))
+)
 
 -- ---- min_lines option -----------------------------------------------------
 config.options.min_lines = 3
-require("distill.fold")._cache[buf] = nil
-require("distill.fold")._recompute(buf)
-local mcache = require("distill.fold")._cache[buf]
+local mcache = require("distill.fold")._recompute(buf)
 local function mcache_has(s, e)
   for _, r in ipairs(mcache.regions) do
     if r.start == s and r["end"] == e then
@@ -161,22 +179,16 @@ check("min_lines=3: keeps 5-line logger.debug (7..11)", mcache_has(7, 11), vim.i
 check("min_lines=3: keeps 3-line print block (21..23)", mcache_has(21, 23), vim.inspect(mcache.regions))
 check("min_lines=3: drops 2-line block (15..16)", not mcache_has(15, 16), vim.inspect(mcache.regions))
 config.options.min_lines = 1
-config.options.fold_print = false
-require("distill.fold")._cache[buf] = nil
-require("distill.fold")._recompute(buf)
-mcache = require("distill.fold")._cache[buf]
+config.options.groups.output = false
+mcache = require("distill.fold")._recompute(buf)
 check("min_lines=1: keeps one-line logging calls", mcache_has(16, 16), vim.inspect(mcache.regions))
 config.options.min_lines = 2
-config.options.fold_print = true
+config.options.groups.output = true
 
 -- ---- regex fallback (no treesitter) ---------------------------------------
 local fb = require("distill.detect").fallback
--- effective spec with print patterns active (mirrors fold_print = true)
 local pyspec = config.options.languages.python
-local spec = {
-  call_node_types = pyspec.call_node_types,
-  patterns = vim.list_extend(vim.deepcopy(pyspec.patterns), vim.deepcopy(pyspec.print_patterns)),
-}
+local spec = detect._effective_spec(pyspec, "python")
 vim.cmd("enew")
 vim.api.nvim_buf_set_lines(0, 0, -1, false, {
   "x = 1",
@@ -194,6 +206,14 @@ end
 check("fallback: multi-line logger.info 2..4", fstarts[2] == 4, vim.inspect(fregions))
 check("fallback: single-line print 5", fstarts[5] == 5, vim.inspect(fregions))
 check("fallback: does not flag assignment", fstarts[1] == nil)
+
+vim.api.nvim_buf_set_lines(fbuf, 0, -1, false, { "err.Error()", 'logger.Error("x")' })
+local go_fallback = fb(fbuf, detect._effective_spec(config.options.languages.go, "go"))
+check(
+  "fallback: require_args ignores empty accessors",
+  #go_fallback == 1 and go_fallback[1].start == 2,
+  vim.inspect(go_fallback)
+)
 
 print(("\n%d failure(s)"):format(failures))
 vim.cmd((failures == 0) and "qa!" or "cq!")

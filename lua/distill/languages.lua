@@ -13,7 +13,7 @@
 -- unless you anchor them yourself). They are tested against the callee text, so
 -- `"%.info$"` matches `logging.info` / `logger.info` / `self.logger.info`.
 --
--- Optional spec fields beyond `call_node_types` / `patterns` / `print_patterns`:
+-- Optional spec fields beyond `call_node_types` / `groups`:
 --   * `callee = function(node, bufnr) -> string|nil` overrides callee extraction
 --     for grammars where a call is not a simple call node (see callee.lua).
 --   * `require_args = true` ignores calls with an empty argument list, which
@@ -63,162 +63,483 @@ local function with_suffixes(names, suffixes)
   return out
 end
 
--- `patterns` are always active. `print_patterns` are only used when the
--- `fold_print` option is enabled.
---
--- The log-level patterns match on the method name (anchored to the end of the
--- callee), so `logging.info(...)`, `logger.debug(...)`, `self.logger.warning(...)`,
--- `log.error(...)`, ... fold, while setup calls like `logging.basicConfig(...)`
--- / `logging.getLogger(...)` are deliberately left alone.
+local function rule(patterns, opts)
+  return vim.tbl_extend("force", { patterns = patterns }, opts or {})
+end
+
 local python = {
   call_node_types = { "call" },
-  patterns = {
-    "%.debug$",
-    "%.info$",
-    "%.warning$",
-    "%.warn$",
-    "%.error$",
-    "%.critical$",
-    "%.exception$",
-    "%.fatal$",
-    "%.log$", -- logging.log(level, ...)
-  },
-  print_patterns = {
-    "^print$", -- print(...)
-    "^pprint$", -- pprint(...)
+  groups = {
+    logging = {
+      levels = {
+        debug = rule({ "%.debug$" }),
+        info = rule({ "%.info$" }),
+        warning = rule({ "%.warning$", "%.warn$" }),
+        error = rule({ "%.error$" }),
+        critical = rule({ "%.critical$", "%.fatal$" }),
+        exception = rule({ "%.exception$" }),
+        success = rule({ "%.success$" }),
+        generic = rule({ "%.log$" }),
+      },
+    },
+    output = {
+      print = {
+        builtin = rule({ "^print$" }),
+        pretty = rule({ "^pprint$", "^pp$", "^pprint%.pprint$", "^pprint%.pp$" }),
+        rich = rule({ "^rich%.print$", "^rich%.print_json$" }),
+      },
+      warning = { warnings = rule({ "^warnings%.warn$" }) },
+      stack = {
+        traceback = rule({ "^traceback%.print_" }),
+        faulthandler = rule({ "^faulthandler%.dump_traceback", "^faulthandler%.dump_traceback_later$" }),
+      },
+      debugger = {
+        breakpoint_ = rule({ "^breakpoint$" }, { require_args = false }),
+        pdb = rule({ "^pdb%.set_trace$", "^pdb%.post_mortem$", "^pdb%.pm$" }, { require_args = false }),
+      },
+    },
+    control = {
+      termination = {
+        exit = rule({ "^sys%.exit$", "^os%._exit$", "^os%.abort$" }, { require_args = false }),
+      },
+    },
   },
 }
 
--- Go: stdlib `log`, slog, zap, logrus, zerolog. `require_args` keeps
--- `err.Error()` from counting as a log call.
+local go_suffixes = { "", "f", "ln", "w", "Context", "Ctx" }
 local go = {
   call_node_types = { "call_expression" },
   require_args = true,
-  patterns = join(
-    members(with_suffixes(
-      { "Debug", "Info", "Warn", "Warning", "Error", "Fatal", "Panic", "Trace" },
-      { "", "f", "ln", "w", "Context", "Ctx" }
-    )),
-    members({ "Msg", "Msgf", "Logf", "LogAttrs" }), -- zerolog / testing / slog
-    { "^t%.Log$", "^log%.Print" } -- t.Log, log.Print / Printf / Println
-  ),
-  print_patterns = { "^fmt%.Print", "^fmt%.Fprint", "^print$", "^println$" },
+  groups = {
+    logging = {
+      levels = {
+        trace = rule(members(with_suffixes({ "Trace" }, go_suffixes))),
+        debug = rule(members(with_suffixes({ "Debug", "DPanic" }, go_suffixes))),
+        info = rule(members(with_suffixes({ "Info" }, go_suffixes))),
+        warning = rule(members(with_suffixes({ "Warn", "Warning" }, go_suffixes))),
+        error = rule(members(with_suffixes({ "Error" }, go_suffixes))),
+        fatal = rule(members(with_suffixes({ "Fatal", "Panic" }, go_suffixes))),
+        message = rule(members({ "Msg", "Msgf", "Send" })),
+        generic = rule(join(members({ "Log", "Logf", "LogAttrs", "Output" }), { "^t%.Log", "^log%.Print" })),
+      },
+    },
+    output = {
+      print = { fmt = rule({ "^fmt%.Print", "^fmt%.Fprint", "^print$", "^println$" }) },
+      dump = { spew = rule({ "^spew%.Dump$", "^spew%.Fdump$" }) },
+      stack = { runtime = rule({ "^debug%.PrintStack$", "^runtime/debug%.PrintStack$" }) },
+      debugger = { runtime = rule({ "^runtime%.Breakpoint$" }, { require_args = false }) },
+    },
+    control = { panic = { builtin = rule({ "^panic$" }) } },
+  },
 }
 
--- JavaScript / TypeScript: `console.*` and logger objects (winston, pino,
--- bunyan, loglevel, ...). `console.log` is the print-style call, so it is only
--- folded with `fold_print`; a bare `.log` pattern would also hit `Math.log`.
 local javascript = {
   call_node_types = { "call_expression" },
   require_args = true,
-  patterns = members({ "debug", "info", "warn", "warning", "error", "trace", "fatal" }),
-  print_patterns = { "^console%.log$", "^console%.dir$", "^console%.table$" },
+  groups = {
+    logging = {
+      levels = {
+        trace = rule(members({ "trace" })),
+        debug = rule(members({ "debug" })),
+        info = rule(members({ "info" })),
+        warning = rule(members({ "warn", "warning" })),
+        error = rule(members({ "error", "fatal" })),
+        verbose = rule(members({ "verbose", "success" })),
+        generic = rule({ "^Logger%.log$", "^logger%.log$" }),
+      },
+    },
+    output = {
+      print = { console = rule({ "^console%.log$", "^console%.dir$", "^console%.table$", "^console%.dirxml$" }) },
+      diagnostic = {
+        console = rule({ "^console%.assert$", "^console%.count$", "^console%.countReset$", "^process%.emitWarning$" }),
+      },
+      report = { process = rule({ "^process%.report%.writeReport$" }, { require_args = false }) },
+    },
+    tracing = {
+      timing = { console = rule({ "^console%.time$", "^console%.timeLog$", "^console%.timeEnd$" }) },
+      profiling = { console = rule({ "^console%.profile$", "^console%.profileEnd$", "^console%.timeStamp$" }) },
+      groups = { console = rule({ "^console%.group$", "^console%.groupCollapsed$", "^console%.groupEnd$" }) },
+    },
+  },
 }
 
--- Rust: `log` / `tracing` / `defmt` macros. Macro invocations have no call
--- node, and the callee text is the macro path without the `!` (`info`,
--- `log::info`, `tracing::debug`).
 local rust = {
   call_node_types = { "macro_invocation" },
-  patterns = join(
-    bare({ "trace", "debug", "info", "warn", "error", "log", "event" }),
-    members({ "trace", "debug", "info", "warn", "error", "log", "event" })
-  ),
-  print_patterns = bare({ "println", "print", "eprintln", "eprint", "dbg" }),
+  groups = {
+    logging = {
+      levels = {
+        trace = rule(join(bare({ "trace" }), members({ "trace" }))),
+        debug = rule(join(bare({ "debug" }), members({ "debug" }))),
+        info = rule(join(bare({ "info" }), members({ "info" }))),
+        warning = rule(join(bare({ "warn" }), members({ "warn" }))),
+        error = rule(join(bare({ "error", "crit" }), members({ "error", "crit" }))),
+        generic = rule(join(bare({ "log" }), members({ "log" }))),
+      },
+    },
+    output = {
+      print = {
+        std = rule(
+          join(
+            bare({ "println", "print", "eprintln", "eprint" }),
+            members({ "println", "print", "eprintln", "eprint" })
+          )
+        ),
+      },
+      dump = { debug = rule(join(bare({ "dbg" }), members({ "dbg" }))) },
+    },
+    tracing = {
+      events = { event = rule(join(bare({ "event" }), members({ "event" }))) },
+      spans = {
+        span = rule(
+          join(
+            bare({ "span", "trace_span", "debug_span", "info_span", "warn_span", "error_span" }),
+            members({ "span", "trace_span", "debug_span", "info_span", "warn_span", "error_span" })
+          )
+        ),
+      },
+    },
+    control = {
+      panic = { panic = rule(join(bare({ "panic", "todo", "unimplemented", "unreachable" }), members({ "panic" }))) },
+      assert = {
+        assert = rule(
+          join(
+            bare({ "assert", "assert_eq", "assert_ne", "debug_assert", "debug_assert_eq", "debug_assert_ne" }),
+            members({ "assert" })
+          )
+        ),
+      },
+    },
+  },
 }
 
--- C++: spdlog / glog / Qt / Boost.Log / ROS macros and methods, plus
--- stream-style logging (`LOG(INFO) << ...`, `qDebug() << ...`).
 local cpp = {
   call_node_types = { "call_expression", "binary_expression" },
   callee = callee.cpp,
   require_args = true,
-  patterns = join(
-    members({ "trace", "debug", "info", "notice", "warn", "warning", "error", "critical", "fatal" }),
-    bare({ "LOG", "DLOG", "VLOG", "PLOG", "qDebug", "qInfo", "qWarning", "qCritical", "qFatal" }),
-    bare({ "BOOST_LOG_TRIVIAL", "BOOST_LOG" }),
-    { "^D?LOG_[%u_]+$", "^SPDLOG_[%u_]+$", "^RCLCPP_[%u_]+$", "^ROS_[%u_]+$" }
-  ),
-  print_patterns = join(
-    bare({ "printf", "fprintf", "puts", "perror", "cout", "cerr", "clog" }),
-    bare({ "std::printf", "std::puts", "std::print", "std::println", "fmt::print", "fmt::println" }),
-    bare({ "std::cout", "std::cerr", "std::clog" })
-  ),
+  groups = {
+    logging = {
+      levels = {
+        trace = rule(members({ "trace" })),
+        debug = rule(members({ "debug" })),
+        info = rule(members({ "info", "notice" })),
+        warning = rule(members({ "warn", "warning" })),
+        error = rule(members({ "error", "critical", "fatal" })),
+      },
+      macros = {
+        glog = rule(
+          join(bare({ "LOG", "DLOG", "VLOG", "PLOG", "RAW_LOG" }), { "^[PDV]?LOG_[%u_]+$", "^ABSL_[PDV]?LOG" })
+        ),
+        qt = rule(bare({
+          "qDebug",
+          "qInfo",
+          "qWarning",
+          "qCritical",
+          "qFatal",
+          "qCDebug",
+          "qCInfo",
+          "qCWarning",
+          "qCCritical",
+          "qErrnoWarning",
+        })),
+        boost = rule({ "^BOOST_LOG" }),
+        spdlog = rule({ "^SPDLOG_[%u_]+$" }),
+        ros = rule({ "^RCLCPP_[%u_]+$", "^ROS_[%u_]+$", "^CONSOLE_BRIDGE_log" }),
+      },
+    },
+    output = {
+      print = {
+        c = rule(bare({ "printf", "fprintf", "vprintf", "vfprintf", "puts", "fputs", "putchar", "fputc", "perror" })),
+        cpp = rule(bare({
+          "std::printf",
+          "std::fprintf",
+          "std::puts",
+          "std::print",
+          "std::println",
+          "fmt::print",
+          "fmt::println",
+        })),
+      },
+      stream = {
+        std = rule(bare({
+          "cout",
+          "cerr",
+          "clog",
+          "std::cout",
+          "std::cerr",
+          "std::clog",
+          "llvm::outs",
+          "llvm::errs",
+          "llvm::dbgs",
+        })),
+      },
+    },
+    tracing = {
+      events = { trace = rule({ "^TRACE_EVENT", "^TRACE_COUNTER", "^TracyMessage", "^nvtxMark", "^__itt_marker$" }) },
+      spans = { ranges = rule({ "^Zone", "^nvtxRange", "^__itt_task_" }) },
+      profiling = { frame = rule({ "^FrameMark", "^TracyPlot" }) },
+    },
+    control = {
+      assert = { checks = rule({ "^[DQPA]?CHECK", "^ABSL_[DQPA]?CHECK", "^Q_ASSERT", "^Q_CHECK_PTR$", "^RAW_CHECK$" }) },
+      debugger = {
+        trap = rule(
+          bare({ "__debugbreak", "DebugBreak", "__builtin_debugtrap", "__builtin_trap" }),
+          { require_args = false }
+        ),
+      },
+    },
+  },
 }
 
--- Zig: `std.log` (and scoped loggers) plus `std.debug.print`.
 local zig = {
   call_node_types = { "call_expression" },
   require_args = true,
-  patterns = members({ "debug", "info", "warn", "err" }),
-  print_patterns = { "^std%.debug%.print$", "^debug%.print$" },
+  groups = {
+    logging = {
+      levels = {
+        debug = rule(members({ "debug" })),
+        info = rule(members({ "info" })),
+        warning = rule(members({ "warn" })),
+        error = rule(members({ "err" })),
+      },
+    },
+    output = {
+      print = { debug = rule({ "^std%.debug%.print$", "^debug%.print$" }) },
+      stack = {
+        debug = rule({
+          "^std%.debug%.dumpCurrentStackTrace$",
+          "^std%.debug%.dumpStackTrace$",
+          "^std%.debug%.writeCurrentStackTrace$",
+        }),
+      },
+    },
+    control = { assert = { debug = rule({ "^std%.debug%.assert$" }) } },
+  },
 }
 
--- Ruby: Logger / Rails.logger and Kernel#warn. Calls may omit parentheses
--- (`logger.info "x"`), which Treesitter still parses as a `call`.
 local ruby = {
   call_node_types = { "call" },
-  patterns = join(members({ "debug", "info", "warn", "error", "fatal", "unknown" }), bare({ "warn" })),
-  print_patterns = bare({ "puts", "print", "p", "pp" }),
+  groups = {
+    logging = {
+      levels = {
+        debug = rule(members({ "debug" })),
+        info = rule(members({ "info" })),
+        warning = rule(join(members({ "warn" }), bare({ "warn" }))),
+        error = rule(members({ "error", "fatal", "unknown" })),
+      },
+    },
+    output = {
+      print = { kernel = rule(bare({ "puts", "print", "printf", "putc", "display" })) },
+      dump = { pretty = rule(bare({ "p", "pp" })) },
+      stack = { caller = rule(bare({ "caller", "caller_locations" }), { require_args = false }) },
+      debugger = {
+        gems = rule(
+          { "^binding%.break$", "^binding%.b$", "^binding%.pry$", "^debugger$", "^byebug$" },
+          { require_args = false }
+        ),
+      },
+    },
+    tracing = { spans = { datadog = rule({ "^Datadog::Tracing%.trace$" }) } },
+    control = {
+      panic = { kernel = rule(bare({ "raise", "fail", "abort", "exit", "exit!" }), { require_args = false }) },
+    },
+  },
 }
 
--- Java: SLF4J / Log4j / java.util.logging / Android `Log` / Timber. Method
--- invocations keep the receiver in a separate field; callee.default rebuilds
--- the `System.out.println` / `logger.info` text.
 local java = {
   call_node_types = { "method_invocation" },
-  patterns = join(
-    members({ "trace", "debug", "info", "warn", "warning", "error", "fatal", "severe", "fine", "finer", "finest" }),
-    { "^Log%.[divwe]$", "^Log%.wtf$", "^Timber%.[divwe]$", "^Timber%..*%)%.[divwe]$" }
-  ),
-  print_patterns = { "^System%.out%.print", "^System%.err%.print", "%.printStackTrace$" },
+  groups = {
+    logging = {
+      levels = {
+        trace = rule(members({ "trace" })),
+        debug = rule(members({ "debug", "fine", "finer", "finest" })),
+        info = rule(members({ "info", "config" })),
+        warning = rule(members({ "warn", "warning" })),
+        error = rule(members({ "error", "fatal", "severe" })),
+      },
+      android = {
+        log = rule({ "^Log%.[divwe]$", "^Log%.wtf$", "^Log%.println$" }),
+        timber = rule({
+          "^Timber%.[divwe]$",
+          "^Timber%.wtf$",
+          "^Timber%.log$",
+          "^Timber%..*%)%.[divwe]$",
+          "^Timber%..*%)%.wtf$",
+          "^Timber%..*%)%.log$",
+        }),
+      },
+      structured = { flow = rule(members({ "traceEntry", "traceExit", "catching", "throwing", "always" })) },
+    },
+    output = {
+      print = { system = rule({ "^System%.out%.print", "^System%.err%.print", "^System%.console%(%)[%.:]printf" }) },
+      stack = { throwable = rule({ "%.printStackTrace$", "^Thread%.dumpStack$" }, { require_args = false }) },
+    },
+    tracing = {
+      events = { otel = rule({ "^Sentry%.capture", "^FirebaseCrashlytics%..*recordException$" }) },
+    },
+    control = {
+      assert = { junit = rule({ "^Assertions%.assert", "^Assert%.assert", "^Assertions%.fail$", "^Assert%.fail$" }) },
+      termination = { system = rule({ "^System%.exit$", "^Runtime%..*halt$" }) },
+    },
+  },
 }
 
--- PHP: PSR-3 / Monolog / Laravel `Log::` and `error_log`. Method (`->`) and
--- static (`::`) calls are separate node types from plain function calls.
 local php = {
   call_node_types = { "function_call_expression", "member_call_expression", "scoped_call_expression" },
   require_args = true,
-  patterns = join(
-    members({ "debug", "info", "notice", "warning", "warn", "error", "critical", "alert", "emergency" }),
-    { "%->log$" },
-    bare({ "error_log" })
-  ),
-  print_patterns = bare({ "var_dump", "print_r", "dump", "dd" }),
+  groups = {
+    logging = {
+      levels = {
+        debug = rule(members({ "debug" })),
+        info = rule(members({ "info", "notice" })),
+        warning = rule(members({ "warning", "warn" })),
+        error = rule(members({ "error", "critical", "alert", "emergency" })),
+        generic = rule({ "%->log$", "^Log::log$", "^error_log$", "^syslog$", "^trigger_error$", "^user_error$" }),
+      },
+    },
+    output = {
+      print = { formatted = rule(bare({ "printf", "vprintf" })) },
+      dump = { native = rule(bare({ "var_dump", "print_r", "var_export", "dump", "dd" })) },
+      stack = { native = rule(bare({ "debug_print_backtrace" }), { require_args = false }) },
+      debugger = {
+        xdebug = rule(bare({ "xdebug_break", "xdebug_debug_zval", "xdebug_var_dump" }), { require_args = false }),
+      },
+    },
+    tracing = { events = { sentry = rule({ "^Sentry.*captureMessage$", "^Sentry.*captureException$" }) } },
+    control = { assert = { native = rule(bare({ "assert" })) } },
+  },
 }
 
--- Swift: os.Logger / swift-log / NSLog / os_log / CocoaLumberjack.
 local swift = {
   call_node_types = { "call_expression" },
-  patterns = join(
-    members({ "trace", "debug", "info", "notice", "warning", "warn", "error", "fault", "critical", "log" }),
-    bare({ "NSLog", "os_log" }),
-    { "^DDLog%a+$" }
-  ),
-  print_patterns = bare({ "print", "debugPrint", "dump" }),
+  groups = {
+    logging = {
+      levels = {
+        trace = rule(members({ "trace" })),
+        debug = rule(members({ "debug" })),
+        info = rule(members({ "info", "notice" })),
+        warning = rule(members({ "warning", "warn" })),
+        error = rule(members({ "error", "fault", "critical" })),
+        verbose = rule(members({ "verbose" })),
+        generic = rule(join(
+          members({ "log" }),
+          bare({
+            "NSLog",
+            "os_log",
+            "os_log_with_type",
+            "os_log_info",
+            "os_log_debug",
+            "os_log_error",
+            "os_log_fault",
+          }),
+          { "^DDLog%a+$" }
+        )),
+      },
+    },
+    output = {
+      print = { std = rule(bare({ "print", "debugPrint" })) },
+      dump = { std = rule(bare({ "dump" })) },
+      stack = {
+        thread = rule({ "^Thread%.callStackSymbols$", "^Thread%.callStackReturnAddresses$" }, { require_args = false }),
+      },
+    },
+    tracing = {
+      events = { signpost = rule(bare({ "os_signpost", "os_signpost_event_emit" })) },
+      spans = { signpost = rule(bare({ "os_signpost_interval_begin", "os_signpost_interval_end" })) },
+    },
+    control = {
+      assert = {
+        swift = rule(
+          bare({ "assert", "assertionFailure", "precondition", "preconditionFailure" }),
+          { require_args = false }
+        ),
+      },
+      panic = { swift = rule(bare({ "fatalError" })) },
+    },
+  },
 }
 
--- Lua: logger objects (`log.debug(...)`, `logger:info(...)`). Print-style
--- calls include Neovim's `vim.notify` / `vim.print`.
 local lua = {
   call_node_types = { "function_call" },
-  patterns = members({ "trace", "debug", "info", "warn", "error", "fatal" }),
-  print_patterns = { "^print$", "^vim%.print$", "^vim%.notify$", "^vim%.notify_once$" },
+  groups = {
+    logging = {
+      levels = {
+        trace = rule(members({ "trace" })),
+        debug = rule(members({ "debug" })),
+        info = rule(members({ "info", "notice" })),
+        warning = rule(members({ "warn", "warning" })),
+        error = rule(members({ "error", "fatal", "critical" })),
+      },
+    },
+    output = {
+      print = { lua = rule({ "^print$", "^io%.write$", "^io%.stderr:write$", "^io%.stdout:write$" }) },
+      dump = { nvim = rule({ "^vim%.print$", "^vim%.pretty_print$" }) },
+      notify = {
+        nvim = rule({
+          "^vim%.notify$",
+          "^vim%.notify_once$",
+          "^vim%.deprecate$",
+          "^vim%.api%.nvim_echo$",
+          "^vim%.api%.nvim_err_writeln$",
+          "^vim%.api%.nvim_out_write$",
+          "^vim%.api%.nvim_err_write$",
+        }),
+      },
+      stack = { debug = rule({ "^debug%.traceback$" }, { require_args = false }) },
+      debugger = {
+        lua = rule({ "^debug%.debug$", "^mobdebug%.pause$", "^mobdebug%.start$" }, { require_args = false }),
+      },
+    },
+    control = {
+      assert = { lua = rule(bare({ "assert" })) },
+      panic = { lua = rule(join(bare({ "error" }), { "^os%.exit$" }), { require_args = false }) },
+    },
+  },
 }
 
--- Dart: `print` / `debugPrint`, dart:developer `log`, and the `logger` /
--- `logging` packages. Dart has no call node, so statements are inspected and
--- callee.dart pulls the callee out of the statement's selectors. Single-letter
--- methods (`logger.d`, `_log.e`) must hang off something named like a logger.
 local dart = {
   call_node_types = { "expression_statement" },
   callee = callee.dart,
-  patterns = join(
-    members({ "trace", "debug", "info", "warn", "warning", "error", "fatal", "severe", "shout", "fine", "finer", "finest", "verbose" }),
-    { "[lL]og[%w_]*%.[dtiwefv]$", "%.log$" },
-    bare({ "log" })
-  ),
-  print_patterns = bare({ "print", "debugPrint", "debugPrintStack" }),
+  groups = {
+    logging = {
+      levels = {
+        trace = rule(join(members({ "trace" }), { "[lL]og[%w_]*%.[tv]$" })),
+        debug = rule(join(members({ "debug", "fine", "finer", "finest" }), { "[lL]og[%w_]*%.d$" })),
+        info = rule(join(members({ "info", "config" }), { "[lL]og[%w_]*%.i$" })),
+        warning = rule(join(members({ "warn", "warning" }), { "[lL]og[%w_]*%.w$" })),
+        error = rule(join(members({ "error", "fatal", "severe", "shout" }), { "[lL]og[%w_]*%.[ef]$" })),
+        verbose = rule(members({ "verbose" })),
+        generic = rule(join({ "%.log$" }, bare({ "log" }))),
+      },
+    },
+    output = {
+      print = { dart = rule(bare({ "print", "debugPrint" })) },
+      stack = { flutter = rule(bare({ "debugPrintStack" })) },
+      dump = {
+        flutter = rule(bare({
+          "debugDumpApp",
+          "debugDumpRenderTree",
+          "debugDumpLayerTree",
+          "debugDumpSemanticsTree",
+          "debugDumpFocusTree",
+          "debugDumpMouseTracker",
+        })),
+      },
+      debugger = { developer = rule(members({ "debugger", "inspect", "postEvent" }), { require_args = false }) },
+    },
+    tracing = {
+      events = { timeline = rule({ "^Timeline%.instantSync$", "^TimelineTask%.instant$" }) },
+      spans = {
+        timeline = rule({
+          "^Timeline%.startSync$",
+          "^Timeline%.finishSync$",
+          "^Timeline%.timeSync$",
+          "^TimelineTask%.start$",
+          "^TimelineTask%.finish$",
+        }, { require_args = false }),
+      },
+    },
+    control = { assert = { dart = rule(bare({ "assert" })) } },
+  },
 }
 
 M.defaults = {

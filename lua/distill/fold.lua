@@ -3,12 +3,12 @@ local detect = require("distill.detect")
 
 local M = {}
 
--- Per-buffer state.
-M._base = {} -- bufnr -> base foldexpr function(lnum)
-M._prev = {} -- bufnr -> { foldmethod, foldexpr } captured before we attached
-M._cache = {} -- bufnr -> { tick, result = {lnum -> foldexpr value}, regions }
-M._closed = {} -- bufnr -> bool: are the logging folds currently meant to be closed?
-M._known = {} -- bufnr -> multiset of logging region signatures seen after the last fold pass
+local OUR_FOLDEXPR = "v:lua.require'distill.fold'.expr()"
+
+-- Folding options and closed folds are window-local in Neovim, so attachment
+-- state must be window-local too. Each entry records the buffer currently using
+-- Distill in that window and the settings that should be restored on detach.
+M._states = {} -- winid -> { bufnr, base, prev, cache, closed, known, autofolded }
 
 -- Default base: Treesitter folds. Safe to call on any line; returns "0" if no
 -- parser so we never throw inside a foldexpr.
@@ -20,12 +20,22 @@ local function default_base(lnum)
   return 0
 end
 
-local function has_parser(bufnr, ft)
-  local lang = vim.treesitter.language.get_lang(ft)
-  if not lang then
-    return false
+local function is_ours(expr)
+  return expr == OUR_FOLDEXPR
+end
+
+local function inherited_state(bufnr, state)
+  if state then
+    return state
   end
-  return (pcall(vim.treesitter.get_parser, bufnr, lang))
+  -- A new split inherits window-local options, including our foldexpr. Reuse
+  -- the source window's original settings so the split can restore cleanly.
+  for _, candidate in pairs(M._states) do
+    if candidate.bufnr == bufnr then
+      return candidate
+    end
+  end
+  return nil
 end
 
 -- Resolve a single foldexpr token to an absolute fold level given the previous
@@ -102,21 +112,25 @@ local function close_regions(win, regions)
   end)
 end
 
--- Build (and cache) the per-line foldexpr result for `bufnr`. Non-logging lines
+-- Build (and cache) the per-line foldexpr result for `bufnr` in `win`. Non-logging lines
 -- get the *verbatim* base value, so general folding is byte-for-byte identical
 -- to whatever origami/treesitter/LSP produces. Only logging lines are rewritten
 -- to nest one level deeper than their surroundings.
-function M._recompute(bufnr)
+function M._recompute(bufnr, win)
+  win = (not win or win == 0) and vim.api.nvim_get_current_win() or win
   local n = vim.api.nvim_buf_line_count(bufnr)
-  local base = M._base[bufnr] or default_base
+  local state = M._states[win]
+  local base = (state and state.bufnr == bufnr and state.base) or config.options.base_foldexpr or default_base
 
   local raw, levels, prev = {}, {}, 0
-  for l = 1, n do
-    local v = base(l)
-    raw[l] = v
-    levels[l] = resolve(v, prev)
-    prev = levels[l]
-  end
+  vim.api.nvim_win_call(win, function()
+    for l = 1, n do
+      local v = base(l)
+      raw[l] = v
+      levels[l] = resolve(v, prev)
+      prev = levels[l]
+    end
+  end)
 
   local regions = fold_regions(detect.detect(bufnr), config.options)
 
@@ -135,21 +149,26 @@ function M._recompute(bufnr)
     end
   end
 
-  M._cache[bufnr] = {
+  local cache = {
     tick = vim.api.nvim_buf_get_changedtick(bufnr),
     result = result,
     regions = regions,
   }
+  if state and state.bufnr == bufnr then
+    state.cache = cache
+  end
+  return cache
 end
 
 -- The foldexpr installed on attached buffers. Cheap: full computation happens
 -- once per change, then every line is a table lookup.
 function M.expr()
   local bufnr = vim.api.nvim_get_current_buf()
-  local c = M._cache[bufnr]
+  local win = vim.api.nvim_get_current_win()
+  local state = M._states[win]
+  local c = state and state.bufnr == bufnr and state.cache or nil
   if not c or c.tick ~= vim.api.nvim_buf_get_changedtick(bufnr) then
-    M._recompute(bufnr)
-    c = M._cache[bufnr]
+    c = M._recompute(bufnr, win)
   end
   return c.result[vim.v.lnum] or "0"
 end
@@ -160,25 +179,25 @@ end
 function M.attach(bufnr, win)
   bufnr = (not bufnr or bufnr == 0) and vim.api.nvim_get_current_buf() or bufnr
   win = (not win or win == 0) and vim.api.nvim_get_current_win() or win
-  local ft = vim.bo[bufnr].filetype
 
   local cur = vim.api.nvim_get_option_value("foldexpr", { win = win }) or ""
   local cur_fm = vim.api.nvim_get_option_value("foldmethod", { win = win })
-  -- "ours" means we already attached *this buffer* (foldexpr/foldmethod are
-  -- window-local, so the string alone can be a leftover from another buffer).
-  local ours = M._base[bufnr] ~= nil
-  -- A foldexpr string left over from another distill buffer in the same
-  -- window must not be mistaken for this buffer's original folding.
-  local inherited = cur:find("fold%-logging") ~= nil
+  local state = M._states[win]
+  local inherited = is_ours(cur)
+  local source = inherited and inherited_state(bufnr, state) or nil
+
+  if inherited and state and state.bufnr == bufnr then
+    return true
+  end
 
   -- Don't clobber a deliberate non-expr folding setup (marker/indent/syntax/diff).
   -- We compose with `expr` (origami/treesitter/LSP) and will bootstrap from the
   -- inert `manual` default, but anything else is left alone.
-  if not ours and cur_fm ~= "expr" and cur_fm ~= "manual" then
+  if not inherited and cur_fm ~= "expr" and cur_fm ~= "manual" then
     vim.b[bufnr].distill_skip = true
-    return false
+    return false, ("foldmethod=%s is not supported"):format(cur_fm)
   end
-  local bootstrapping = not ours and cur_fm ~= "expr"
+  local bootstrapping = not inherited and cur_fm ~= "expr"
 
   local base = config.options.base_foldexpr
   if not base then
@@ -189,28 +208,48 @@ function M.attach(bufnr, win)
       end
     elseif cur:find("treesitter") then
       base = default_base
-    elseif ours then
-      base = M._base[bufnr] or default_base
-    elseif has_parser(bufnr, ft) then
-      base = default_base
-    else
+    elseif inherited then
+      base = (source and source.base) or default_base
+    elseif cur_fm == "expr" and cur ~= "" and cur ~= "0" then
       vim.b[bufnr].distill_skip = true
-      return false
+      return false, "custom foldexpr requires the base_foldexpr option"
+    else
+      -- With no general fold provider, use a zero-level base. Detection can
+      -- still use its parser-less fallback without changing unrelated lines.
+      base = default_base
     end
   end
 
-  if not ours then
-    M._prev[bufnr] = {
+  local prev
+  if inherited then
+    prev = source and vim.deepcopy(source.prev)
+      or {
+        foldmethod = "manual",
+        foldexpr = "0",
+        foldlevel = vim.api.nvim_get_option_value("foldlevel", { win = win }),
+        foldminlines = vim.api.nvim_get_option_value("foldminlines", { win = win }),
+      }
+  else
+    prev = {
       foldmethod = cur_fm,
-      foldexpr = inherited and "0" or cur,
+      foldexpr = cur,
       foldlevel = vim.api.nvim_get_option_value("foldlevel", { win = win }),
       foldminlines = vim.api.nvim_get_option_value("foldminlines", { win = win }),
     }
   end
-  M._base[bufnr] = base
-  M._cache[bufnr] = nil
+
+  local same_buffer = state and state.bufnr == bufnr
+  M._states[win] = {
+    bufnr = bufnr,
+    base = base,
+    prev = prev,
+    cache = nil,
+    closed = same_buffer and state.closed or false,
+    known = same_buffer and state.known or {},
+    autofolded = same_buffer and state.autofolded or false,
+  }
   vim.api.nvim_set_option_value("foldmethod", "expr", { win = win })
-  vim.api.nvim_set_option_value("foldexpr", "v:lua.require'distill.fold'.expr()", { win = win })
+  vim.api.nvim_set_option_value("foldexpr", OUR_FOLDEXPR, { win = win })
   -- When we introduce expr folding ourselves, keep general folds open by default
   -- so only the logging folds (which we close explicitly) appear collapsed.
   if bootstrapping then
@@ -228,7 +267,8 @@ function M.ensure_attached(bufnr, win)
   bufnr = (not bufnr or bufnr == 0) and vim.api.nvim_get_current_buf() or bufnr
   win = (not win or win == 0) and vim.api.nvim_get_current_win() or win
   local cur = vim.api.nvim_get_option_value("foldexpr", { win = win }) or ""
-  if M._base[bufnr] and cur:find("fold%-logging") then
+  local state = M._states[win]
+  if state and state.bufnr == bufnr and is_ours(cur) then
     return true
   end
   return M.attach(bufnr, win)
@@ -248,40 +288,91 @@ function M.window_for(bufnr)
   return nil
 end
 
+function M.windows_for(bufnr)
+  local out = {}
+  for _, win in ipairs(vim.api.nvim_list_wins()) do
+    if vim.api.nvim_win_get_buf(win) == bufnr then
+      out[#out + 1] = win
+    end
+  end
+  return out
+end
+
+local function notify(message, level)
+  vim.notify("distill: " .. message, level or vim.log.levels.WARN)
+end
+
+local function prepare(bufnr, quiet)
+  if not config.options.enable then
+    if not quiet then
+      notify("disabled")
+    end
+    return nil
+  end
+  local ft = vim.bo[bufnr].filetype
+  if not config.options.languages[ft] then
+    if not quiet then
+      notify(("unsupported filetype %q"):format(ft))
+    end
+    return nil
+  end
+  local win = M.window_for(bufnr)
+  if not win then
+    if not quiet then
+      notify("buffer is not displayed in a window")
+    end
+    return nil
+  end
+  vim.b[bufnr].distill_skip = false
+  local ok, reason = M.ensure_attached(bufnr, win)
+  if not ok then
+    if not quiet and reason then
+      notify(reason)
+    end
+    return nil
+  end
+  return win, M._states[win]
+end
+
+local function any_closed(win, regions)
+  local closed = false
+  vim.api.nvim_win_call(win, function()
+    for _, r in ipairs(regions) do
+      if vim.fn.foldclosed(r.start) == r.start then
+        closed = true
+        break
+      end
+    end
+  end)
+  return closed
+end
+
 -- Close only the logging folds, leaving general folds (and parents the user has
 -- closed) untouched.
 function M.close(bufnr)
   bufnr = (not bufnr or bufnr == 0) and vim.api.nvim_get_current_buf() or bufnr
-  local win = M.window_for(bufnr)
+  local win, state = prepare(bufnr, false)
   if not win then
-    return
+    return false
   end
-  vim.b[bufnr].distill_skip = false -- explicit invocation: retry and report
-  if not M.ensure_attached(bufnr, win) then
-    return
-  end
-  M._recompute(bufnr)
-  local regions = M._cache[bufnr].regions
+  local regions = M._recompute(bufnr, win).regions
 
   close_regions(win, regions)
-  M._known[bufnr] = signatures(regions)
-  M._closed[bufnr] = true
+  state.known = signatures(regions)
+  state.closed = true
+  return true
 end
 
 -- Close only regions that were not present during the previous fold pass. Used
 -- on write so manually opened existing logging folds stay open.
 function M.close_new(bufnr)
   bufnr = (not bufnr or bufnr == 0) and vim.api.nvim_get_current_buf() or bufnr
-  local win = M.window_for(bufnr)
+  local win, state = prepare(bufnr, true)
   if not win then
     return
   end
-  if not M.ensure_attached(bufnr, win) then
-    return
-  end
-  local known = vim.deepcopy(M._known[bufnr] or {})
-  M._recompute(bufnr)
-  local regions = M._cache[bufnr].regions
+  local known = vim.deepcopy(state.known or {})
+  local regions = M._recompute(bufnr, win).regions
   local new_regions = {}
   for _, r in ipairs(regions) do
     local key = signature(r)
@@ -293,22 +384,17 @@ function M.close_new(bufnr)
   end
 
   close_regions(win, new_regions)
-  M._known[bufnr] = signatures(regions)
+  state.known = signatures(regions)
 end
 
 -- Open only the logging folds (folds that start exactly on a detected region).
 function M.open(bufnr)
   bufnr = (not bufnr or bufnr == 0) and vim.api.nvim_get_current_buf() or bufnr
-  local win = M.window_for(bufnr)
+  local win, state = prepare(bufnr, false)
   if not win then
-    return
+    return false
   end
-  vim.b[bufnr].distill_skip = false -- explicit invocation: retry and report
-  if not M.ensure_attached(bufnr, win) then
-    return
-  end
-  M._recompute(bufnr)
-  local regions = M._cache[bufnr].regions
+  local regions = M._recompute(bufnr, win).regions
 
   vim.api.nvim_win_call(win, function()
     local view = vim.fn.winsaveview()
@@ -320,43 +406,61 @@ function M.open(bufnr)
     end
     vim.fn.winrestview(view)
   end)
-  M._closed[bufnr] = false
+  state.closed = false
+  return true
 end
 
 function M.toggle(bufnr)
   bufnr = (not bufnr or bufnr == 0) and vim.api.nvim_get_current_buf() or bufnr
-  if M._closed[bufnr] then
+  local win = prepare(bufnr, false)
+  if not win then
+    return false
+  end
+  local regions = M._recompute(bufnr, win).regions
+  if any_closed(win, regions) then
     M.open(bufnr)
   else
     M.close(bufnr)
   end
+  return true
 end
 
 -- Recompute folds (e.g. after edits) and re-apply the closed state if active.
 function M.refresh(bufnr)
   bufnr = (not bufnr or bufnr == 0) and vim.api.nvim_get_current_buf() or bufnr
-  local win = M.window_for(bufnr)
-  M._cache[bufnr] = nil
-  if win then
-    -- re-assert our foldexpr to force Vim to recompute folds
-    vim.api.nvim_win_call(win, function()
-      vim.api.nvim_set_option_value("foldmethod", "expr", { win = win })
-    end)
+  local win, state = prepare(bufnr, false)
+  if not win then
+    return false
   end
-  if M._closed[bufnr] then
-    M.close(bufnr)
-  else
-    M._recompute(bufnr)
-    M._known[bufnr] = signatures(M._cache[bufnr] and M._cache[bufnr].regions or {})
+  local should_close = state.cache and any_closed(win, state.cache.regions) or state.closed
+  state.cache = nil
+  -- Re-assert our foldexpr to force Neovim to recompute folds.
+  vim.api.nvim_set_option_value("foldmethod", "expr", { win = win })
+  local regions = M._recompute(bufnr, win).regions
+  if should_close then
+    close_regions(win, regions)
   end
+  state.closed = should_close
+  state.known = signatures(regions)
+  return true
 end
 
 -- Populate the quickfix list with detected logging statements.
 function M.list(bufnr)
   bufnr = (not bufnr or bufnr == 0) and vim.api.nvim_get_current_buf() or bufnr
+  if not config.options.enable then
+    notify("disabled")
+    return false
+  end
+  local ft = vim.bo[bufnr].filetype
+  if not config.options.languages[ft] then
+    notify(("unsupported filetype %q"):format(ft))
+    return false
+  end
   local regions = detect.detect(bufnr)
   if #regions == 0 then
-    return
+    notify("no configured statements detected", vim.log.levels.INFO)
+    return false
   end
   local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
   local items = {}
@@ -370,26 +474,45 @@ function M.list(bufnr)
   end
   vim.fn.setqflist({}, " ", { title = "distill: detected", items = items })
   vim.cmd("botright copen")
+  return true
 end
 
 -- Restore original folding on every window we changed and forget all state.
 function M.detach_all()
-  for _, w in ipairs(vim.api.nvim_list_wins()) do
-    local b = vim.api.nvim_win_get_buf(w)
-    local prev = M._prev[b]
-    local cur = vim.api.nvim_get_option_value("foldexpr", { win = w }) or ""
-    if prev and cur:find("fold%-logging") then
-      vim.api.nvim_set_option_value("foldmethod", prev.foldmethod or "manual", { win = w })
-      vim.api.nvim_set_option_value("foldexpr", prev.foldexpr or "0", { win = w })
-      if prev.foldlevel ~= nil then
-        vim.api.nvim_set_option_value("foldlevel", prev.foldlevel, { win = w })
-      end
-      if prev.foldminlines ~= nil then
-        vim.api.nvim_set_option_value("foldminlines", prev.foldminlines, { win = w })
+  for w, state in pairs(M._states) do
+    if vim.api.nvim_win_is_valid(w) then
+      local prev = state.prev
+      local cur = vim.api.nvim_get_option_value("foldexpr", { win = w }) or ""
+      if prev and is_ours(cur) then
+        vim.api.nvim_set_option_value("foldmethod", prev.foldmethod or "manual", { win = w })
+        vim.api.nvim_set_option_value("foldexpr", prev.foldexpr or "0", { win = w })
+        if prev.foldlevel ~= nil then
+          vim.api.nvim_set_option_value("foldlevel", prev.foldlevel, { win = w })
+        end
+        if prev.foldminlines ~= nil then
+          vim.api.nvim_set_option_value("foldminlines", prev.foldminlines, { win = w })
+        end
       end
     end
   end
-  M._base, M._cache, M._closed, M._prev, M._known = {}, {}, {}, {}, {}
+  M._states = {}
+  for _, b in ipairs(vim.api.nvim_list_bufs()) do
+    if vim.api.nvim_buf_is_valid(b) then
+      vim.b[b].distill_skip = nil
+    end
+  end
+end
+
+function M.forget_window(win)
+  M._states[tonumber(win)] = nil
+end
+
+function M.rearm(bufnr)
+  for _, state in pairs(M._states) do
+    if state.bufnr == bufnr then
+      state.autofolded = false
+    end
+  end
 end
 
 return M
