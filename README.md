@@ -40,13 +40,13 @@ replacing it.
     "swift", "lua", "dart",
   },
   cmd = {
-    "FLFold",
-    "FLUnfold",
-    "FLToggle",
-    "FLRefresh",
-    "FLList",
-    "FLEnable",
-    "FLDisable",
+    "DistillFold",
+    "DistillUnfold",
+    "DistillToggle",
+    "DistillRefresh",
+    "DistillList",
+    "DistillEnable",
+    "DistillDisable",
   },
   opts = {},
 }
@@ -65,13 +65,13 @@ can also control them manually:
 
 | Command      | Action                                      |
 | ------------ | ------------------------------------------- |
-| `:FLFold`    | Close logging folds in the current buffer.  |
-| `:FLUnfold`  | Open logging folds in the current buffer.   |
-| `:FLToggle`  | Toggle logging folds in the current buffer. |
-| `:FLRefresh` | Recompute logging folds after edits.        |
-| `:FLList`    | List detected calls in the quickfix window. |
-| `:FLEnable`  | Re-enable and attach to open buffers.       |
-| `:FLDisable` | Disable and restore previous folding.       |
+| `:DistillFold`    | Close logging folds in the current buffer.  |
+| `:DistillUnfold`  | Open logging folds in the current buffer.   |
+| `:DistillToggle`  | Toggle logging folds in the current buffer. |
+| `:DistillRefresh` | Recompute logging folds after edits.        |
+| `:DistillList`    | List detected calls in the quickfix window. |
+| `:DistillEnable`  | Re-enable and attach to open buffers.       |
+| `:DistillDisable` | Disable and restore previous folding.       |
 
 ## Configuration
 
