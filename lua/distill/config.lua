@@ -1,4 +1,4 @@
-local languages = require("fold-logging.languages")
+local languages = require("distill.languages")
 
 local M = {}
 
@@ -22,7 +22,7 @@ M.defaults = {
   min_lines = 2,
 
   -- Base foldexpr that produces the *general* folds (functions, classes, ...).
-  -- fold-logging composes its logging folds on top of this so it never replaces
+  -- distill composes its logging folds on top of this so it never replaces
   -- your normal folding. `nil` auto-detects:
   --   * if the buffer already uses an `expr` foldexpr mentioning "lsp" -> LSP
   --   * otherwise -> Treesitter (`vim.treesitter.foldexpr`)

@@ -7,14 +7,14 @@
 -- Every unmarked call is a negative control (e.g. `err.Error()`, `Math.log`).
 --
 -- A language is SKIPPED when its Treesitter parser is not installed. To test
--- parsers that live outside Neovim's runtimepath, point FOLD_LOGGING_PARSERS at
+-- parsers that live outside Neovim's runtimepath, point DISTILL_PARSERS at
 -- a directory of `<lang>.so` files.
 
 local root = vim.fn.fnamemodify(vim.fn.getcwd(), ":p")
 vim.opt.runtimepath:append(root)
 
-local config = require("fold-logging.config")
-local detect = require("fold-logging.detect")
+local config = require("distill.config")
+local detect = require("distill.detect")
 config.setup({})
 
 local failures, skipped = 0, 0
@@ -28,7 +28,7 @@ local function load_parser(lang)
   if vim.treesitter.language.add(lang) then
     return true
   end
-  local dir = vim.env.FOLD_LOGGING_PARSERS
+  local dir = vim.env.DISTILL_PARSERS
   return dir ~= nil and vim.treesitter.language.add(lang, { path = ("%s/%s.so"):format(dir, lang) }) ~= nil
 end
 

@@ -1,5 +1,5 @@
-local config = require("fold-logging.config")
-local callee = require("fold-logging.callee")
+local config = require("distill.config")
+local callee = require("distill.callee")
 
 local M = {}
 

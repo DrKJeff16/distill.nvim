@@ -1,5 +1,5 @@
-local config = require("fold-logging.config")
-local detect = require("fold-logging.detect")
+local config = require("distill.config")
+local detect = require("distill.detect")
 
 local M = {}
 
@@ -167,7 +167,7 @@ function M.attach(bufnr, win)
   -- "ours" means we already attached *this buffer* (foldexpr/foldmethod are
   -- window-local, so the string alone can be a leftover from another buffer).
   local ours = M._base[bufnr] ~= nil
-  -- A foldexpr string left over from another fold-logging buffer in the same
+  -- A foldexpr string left over from another distill buffer in the same
   -- window must not be mistaken for this buffer's original folding.
   local inherited = cur:find("fold%-logging") ~= nil
 
@@ -175,7 +175,7 @@ function M.attach(bufnr, win)
   -- We compose with `expr` (origami/treesitter/LSP) and will bootstrap from the
   -- inert `manual` default, but anything else is left alone.
   if not ours and cur_fm ~= "expr" and cur_fm ~= "manual" then
-    vim.b[bufnr].fold_logging_skip = true
+    vim.b[bufnr].distill_skip = true
     return false
   end
   local bootstrapping = not ours and cur_fm ~= "expr"
@@ -194,7 +194,7 @@ function M.attach(bufnr, win)
     elseif has_parser(bufnr, ft) then
       base = default_base
     else
-      vim.b[bufnr].fold_logging_skip = true
+      vim.b[bufnr].distill_skip = true
       return false
     end
   end
@@ -210,7 +210,7 @@ function M.attach(bufnr, win)
   M._base[bufnr] = base
   M._cache[bufnr] = nil
   vim.api.nvim_set_option_value("foldmethod", "expr", { win = win })
-  vim.api.nvim_set_option_value("foldexpr", "v:lua.require'fold-logging.fold'.expr()", { win = win })
+  vim.api.nvim_set_option_value("foldexpr", "v:lua.require'distill.fold'.expr()", { win = win })
   -- When we introduce expr folding ourselves, keep general folds open by default
   -- so only the logging folds (which we close explicitly) appear collapsed.
   if bootstrapping then
@@ -256,7 +256,7 @@ function M.close(bufnr)
   if not win then
     return
   end
-  vim.b[bufnr].fold_logging_skip = false -- explicit invocation: retry and report
+  vim.b[bufnr].distill_skip = false -- explicit invocation: retry and report
   if not M.ensure_attached(bufnr, win) then
     return
   end
@@ -303,7 +303,7 @@ function M.open(bufnr)
   if not win then
     return
   end
-  vim.b[bufnr].fold_logging_skip = false -- explicit invocation: retry and report
+  vim.b[bufnr].distill_skip = false -- explicit invocation: retry and report
   if not M.ensure_attached(bufnr, win) then
     return
   end
@@ -368,7 +368,7 @@ function M.list(bufnr)
       text = vim.trim(lines[r.start] or r.text or ""),
     }
   end
-  vim.fn.setqflist({}, " ", { title = "fold-logging: detected", items = items })
+  vim.fn.setqflist({}, " ", { title = "distill: detected", items = items })
   vim.cmd("botright copen")
 end
 

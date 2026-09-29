@@ -19,7 +19,7 @@
 --   * `require_args = true` ignores calls with an empty argument list, which
 --     separates `logger.Error("x")` from accessors like `err.Error()`.
 
-local callee = require("fold-logging.callee")
+local callee = require("distill.callee")
 
 local M = {}
 

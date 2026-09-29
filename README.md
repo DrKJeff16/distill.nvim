@@ -1,4 +1,4 @@
-# fold-logging.nvim
+# distill.nvim
 
 Automatically fold logging statements—and optionally debug-print calls—without
 changing the rest of your folding setup.
@@ -33,7 +33,7 @@ replacing it.
 
 ```lua
 {
-  "markosnarinian/fold-logging.nvim",
+  "markosnarinian/distill.nvim",
   ft = {
     "python", "go", "javascript", "javascriptreact", "typescript",
     "typescriptreact", "rust", "cpp", "zig", "ruby", "java", "php",
@@ -75,7 +75,7 @@ can also control them manually:
 
 ## Configuration
 
-Pass options through `opts` (or `require("fold-logging").setup{}`). Defaults:
+Pass options through `opts` (or `require("distill").setup{}`). Defaults:
 
 ```lua
 {
@@ -146,7 +146,7 @@ Languages are keyed by Neovim filetype. A language spec contains:
 - `callee` (optional): `function(node, bufnr) -> string|nil` returning the callee
   text for grammars where a call is not a plain call node. Only needed for
   unusual shapes; the built-in extractor handles `function`, `macro`, `method`
-  and `name` fields (see `lua/fold-logging/callee.lua`, which also has the C++
+  and `name` fields (see `lua/distill/callee.lua`, which also has the C++
   stream and Dart implementations).
 
 ```lua
@@ -177,13 +177,13 @@ nvim --headless -u NORC -c "luafile tests/languages.lua"  # every built-in langu
 ```
 
 `tests/languages.lua` skips a language whose parser is not installed. Set
-`FOLD_LOGGING_PARSERS` to a directory of `<lang>.so` files to test parsers
+`DISTILL_PARSERS` to a directory of `<lang>.so` files to test parsers
 outside your runtimepath.
 
 ## API
 
 ```lua
-local fl = require("fold-logging")
+local fl = require("distill")
 
 fl.setup(opts)    -- configure (lazy does this via `opts`)
 fl.fold(bufnr)    -- close logging folds (bufnr optional, defaults to current)

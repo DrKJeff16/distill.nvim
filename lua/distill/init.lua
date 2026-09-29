@@ -1,6 +1,6 @@
-local config = require("fold-logging.config")
-local fold = require("fold-logging.fold")
-local detect = require("fold-logging.detect")
+local config = require("distill.config")
+local fold = require("distill.fold")
+local detect = require("distill.detect")
 
 local M = {}
 
@@ -14,7 +14,7 @@ local function on_open(buf)
   if not config.options.enable or not vim.api.nvim_buf_is_valid(buf) or not supported(buf) then
     return
   end
-  if vim.b[buf].fold_logging_skip then -- already determined unsupported; stay quiet
+  if vim.b[buf].distill_skip then -- already determined unsupported; stay quiet
     return
   end
   local win = fold.window_for(buf)
@@ -24,8 +24,8 @@ local function on_open(buf)
   if not fold.ensure_attached(buf, win) then
     return
   end
-  if config.options.auto_fold and not vim.b[buf].fold_logging_autofolded then
-    vim.b[buf].fold_logging_autofolded = true
+  if config.options.auto_fold and not vim.b[buf].distill_autofolded then
+    vim.b[buf].distill_autofolded = true
     vim.schedule(function()
       if vim.api.nvim_buf_is_valid(buf) and config.options.enable then
         pcall(fold.close, buf)
@@ -48,7 +48,7 @@ end
 function M.setup(opts)
   config.setup(opts)
 
-  local group = vim.api.nvim_create_augroup("FoldLogging", { clear = true })
+  local group = vim.api.nvim_create_augroup("Distill", { clear = true })
   local fts = vim.tbl_keys(config.options.languages)
 
   -- Defer to vim.schedule so attachment runs after every synchronous handler
@@ -68,7 +68,7 @@ function M.setup(opts)
   vim.api.nvim_create_autocmd("BufReadPost", {
     group = group,
     callback = function(a)
-      vim.b[a.buf].fold_logging_autofolded = false
+      vim.b[a.buf].distill_autofolded = false
     end,
   })
   vim.api.nvim_create_autocmd("BufWritePost", {
@@ -96,10 +96,10 @@ function M.setup(opts)
   end, { desc = "Recompute logging folds for the current buffer" })
   cmd("FLEnable", function()
     M.enable()
-  end, { desc = "Enable fold-logging" })
+  end, { desc = "Enable distill" })
   cmd("FLDisable", function()
     M.disable()
-  end, { desc = "Disable fold-logging and restore original folding" })
+  end, { desc = "Disable distill and restore original folding" })
 
   -- Handle buffers already open when setup() runs (e.g. lazy-loaded via :cmd).
   for _, b in ipairs(vim.api.nvim_list_bufs()) do

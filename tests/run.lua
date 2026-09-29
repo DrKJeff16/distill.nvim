@@ -17,8 +17,8 @@ local function check(name, cond, extra)
   end
 end
 
-require("fold-logging").setup({ auto_fold = true, fold_print = true })
-local config = require("fold-logging.config")
+require("distill").setup({ auto_fold = true, fold_print = true })
+local config = require("distill.config")
 
 -- Simulate a foldexpr-based general-folding setup (as origami/treesitter give).
 local function open_fixture(path)
@@ -29,14 +29,14 @@ local function open_fixture(path)
   vim.api.nvim_set_option_value("foldexpr", "v:lua.vim.treesitter.foldexpr()", { win = win })
   vim.api.nvim_set_option_value("foldlevel", 99, { win = win }) -- general folds open
   -- Trigger our BufWinEnter path now that the base foldexpr is set.
-  require("fold-logging.init")
+  require("distill.init")
   vim.cmd("doautocmd BufWinEnter")
   return vim.api.nvim_get_current_buf()
 end
 
 -- ---- Python detection -----------------------------------------------------
 local buf = open_fixture("/tests/fixtures/sample.py")
-local detect = require("fold-logging.detect")
+local detect = require("distill.detect")
 local regions = detect.detect(buf)
 
 local starts = {}
@@ -68,8 +68,8 @@ check("fold_print=false: logging.info(16) still detected", noprint[16] ~= nil, v
 config.options.fold_print = true
 
 -- ---- Folding behaviour ----------------------------------------------------
-require("fold-logging.fold")._recompute(buf)
-local cache = require("fold-logging.fold")._cache[buf]
+require("distill.fold")._recompute(buf)
+local cache = require("distill.fold")._cache[buf]
 -- merged debug block stays its own fold; the 3 consecutive prints merge to 22..24
 local function has_region(s, e)
   for _, r in ipairs(cache.regions) do
@@ -96,17 +96,17 @@ vim.api.nvim_win_call(win, function()
 end)
 
 -- Unfold then re-fold via the API.
-require("fold-logging").unfold(buf)
+require("distill").unfold(buf)
 vim.api.nvim_win_call(win, function()
   check("unfold: logger.debug fold is open", vim.fn.foldclosed(7) == -1)
 end)
-require("fold-logging").fold(buf)
+require("distill").fold(buf)
 vim.api.nvim_win_call(win, function()
   check("refold: logger.debug fold closed again", vim.fn.foldclosed(7) == 7)
 end)
 
 -- New logging statements should be detected and folded on write.
-require("fold-logging").unfold(buf)
+require("distill").unfold(buf)
 vim.api.nvim_win_call(win, function()
   check("write setup: existing logger.debug fold is open", vim.fn.foldclosed(7) == -1)
 end)
@@ -123,20 +123,20 @@ vim.api.nvim_win_call(win, function()
   check("write: existing logging fold stays open", vim.fn.foldclosed(7) == -1, "foldclosed(7)=" .. vim.fn.foldclosed(7))
 end)
 vim.api.nvim_buf_set_lines(buf, 17, 19, false, {})
-require("fold-logging").fold(buf)
+require("distill").fold(buf)
 
 -- ---- Base composition preserved -------------------------------------------
 -- A non-logging line must return exactly the base foldexpr value.
 local base_val = vim.treesitter.foldexpr(6) -- def compute(...) line
-require("fold-logging.fold")._recompute(buf)
-local ours_val = require("fold-logging.fold")._cache[buf].result[6]
+require("distill.fold")._recompute(buf)
+local ours_val = require("distill.fold")._cache[buf].result[6]
 check("compose: non-logging line keeps base foldexpr value", tostring(ours_val) == tostring(base_val), ("base=%s ours=%s"):format(tostring(base_val), tostring(ours_val)))
 
 -- ---- min_lines option -----------------------------------------------------
 config.options.min_lines = 3
-require("fold-logging.fold")._cache[buf] = nil
-require("fold-logging.fold")._recompute(buf)
-local mcache = require("fold-logging.fold")._cache[buf]
+require("distill.fold")._cache[buf] = nil
+require("distill.fold")._recompute(buf)
+local mcache = require("distill.fold")._cache[buf]
 local function mcache_has(s, e)
   for _, r in ipairs(mcache.regions) do
     if r.start == s and r["end"] == e then
@@ -150,15 +150,15 @@ check("min_lines=3: keeps 3-line print block (21..23)", mcache_has(21, 23), vim.
 check("min_lines=3: drops 2-line block (15..16)", not mcache_has(15, 16), vim.inspect(mcache.regions))
 config.options.min_lines = 1
 config.options.fold_print = false
-require("fold-logging.fold")._cache[buf] = nil
-require("fold-logging.fold")._recompute(buf)
-mcache = require("fold-logging.fold")._cache[buf]
+require("distill.fold")._cache[buf] = nil
+require("distill.fold")._recompute(buf)
+mcache = require("distill.fold")._cache[buf]
 check("min_lines=1: keeps one-line logging calls", mcache_has(16, 16), vim.inspect(mcache.regions))
 config.options.min_lines = 2
 config.options.fold_print = true
 
 -- ---- regex fallback (no treesitter) ---------------------------------------
-local fb = require("fold-logging.detect").fallback
+local fb = require("distill.detect").fallback
 -- effective spec with print patterns active (mirrors fold_print = true)
 local pyspec = config.options.languages.python
 local spec = {
