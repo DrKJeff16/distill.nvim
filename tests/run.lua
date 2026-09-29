@@ -20,6 +20,18 @@ end
 require("distill").setup({ auto_fold = true, fold_print = true })
 local config = require("distill.config")
 
+-- ---- Default keymaps ------------------------------------------------------
+for action, lhs in pairs({
+  fold = "<leader>df",
+  unfold = "<leader>du",
+  toggle = "<leader>dt",
+  refresh = "<leader>dr",
+  list = "<leader>dl",
+}) do
+  local map = vim.fn.maparg(lhs, "n", false, true)
+  check("keymap: " .. action, map.rhs == "<cmd>Distill" .. action:sub(1, 1):upper() .. action:sub(2) .. "<cr>", vim.inspect(map))
+end
+
 -- Simulate a foldexpr-based general-folding setup (as origami/treesitter give).
 local function open_fixture(path)
   vim.cmd("enew")

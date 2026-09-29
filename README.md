@@ -73,6 +73,29 @@ can also control them manually:
 | `:DistillEnable`  | Re-enable and attach to open buffers.       |
 | `:DistillDisable` | Disable and restore previous folding.       |
 
+### Keybindings
+
+Distill adds these normal-mode mappings by default:
+
+| Mapping       | Action                         |
+| ------------- | ------------------------------ |
+| `<leader>df`  | Fold logging statements.       |
+| `<leader>du`  | Unfold logging statements.     |
+| `<leader>dt`  | Toggle logging folds.          |
+| `<leader>dr`  | Refresh logging folds.         |
+| `<leader>dl`  | List logging statements.       |
+
+Set `keymaps = false` to disable the defaults, or override individual mappings:
+
+```lua
+opts = {
+  keymaps = {
+    toggle = "<leader>l",
+    list = false,
+  },
+}
+```
+
 ## Configuration
 
 Pass options through `opts` (or `require("distill").setup{}`). Defaults:
@@ -84,6 +107,13 @@ Pass options through `opts` (or `require("distill").setup{}`). Defaults:
   fold_print = false,
   min_lines = 2,
   base_foldexpr = nil,
+  keymaps = {
+    fold = "<leader>df",
+    unfold = "<leader>du",
+    toggle = "<leader>dt",
+    refresh = "<leader>dr",
+    list = "<leader>dl",
+  },
   languages = {}, -- merged over the built-in specs below
 }
 ```
@@ -103,6 +133,8 @@ Pass options through `opts` (or `require("distill").setup{}`). Defaults:
 - `base_foldexpr` — The fold expression that produces your general folds. `nil`
   auto-detects (LSP when your foldexpr mentions `lsp`, otherwise Treesitter). Set
   to a `function(lnum)` to override, e.g. `base_foldexpr = vim.lsp.foldexpr`.
+- `keymaps` — Normal-mode mappings for the commands above. Set to `false` to
+  disable all defaults, or set an individual action to `false` to disable it.
 - `languages` — Per-filetype detection specs, deep-merged over the built-ins.
   Each spec defines Treesitter call node types, always-active logging patterns,
   and optional `print_patterns` used only when `fold_print = true`. See

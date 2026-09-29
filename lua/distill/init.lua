@@ -101,6 +101,22 @@ function M.setup(opts)
     M.disable()
   end, { desc = "Disable distill and restore original folding" })
 
+  local actions = {
+    fold = { command = "DistillFold", desc = "Distill: fold logging statements" },
+    unfold = { command = "DistillUnfold", desc = "Distill: unfold logging statements" },
+    toggle = { command = "DistillToggle", desc = "Distill: toggle logging folds" },
+    refresh = { command = "DistillRefresh", desc = "Distill: refresh logging folds" },
+    list = { command = "DistillList", desc = "Distill: list logging statements" },
+  }
+  if type(config.options.keymaps) == "table" then
+    for action, mapping in pairs(config.options.keymaps) do
+      local spec = actions[action]
+      if mapping and spec then
+        vim.keymap.set("n", mapping, "<cmd>" .. spec.command .. "<cr>", { desc = spec.desc, silent = true })
+      end
+    end
+  end
+
   -- Handle buffers already open when setup() runs (e.g. lazy-loaded via :cmd).
   for _, b in ipairs(vim.api.nvim_list_bufs()) do
     if vim.api.nvim_buf_is_loaded(b) and supported(b) then

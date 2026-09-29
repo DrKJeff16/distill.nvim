@@ -30,6 +30,16 @@ M.defaults = {
   --   base_foldexpr = vim.lsp.foldexpr
   base_foldexpr = nil,
 
+  -- Normal-mode mappings for the most common actions. Set `keymaps = false`
+  -- to disable them, or set an individual action to false to leave it unmapped.
+  keymaps = {
+    fold = "<leader>df",
+    unfold = "<leader>du",
+    toggle = "<leader>dt",
+    refresh = "<leader>dr",
+    list = "<leader>dl",
+  },
+
   -- Per-filetype detection specs. Merged (deep) over the built-ins, so you can
   -- add new filetypes or override an existing spec's `patterns`.
   languages = languages.defaults,
