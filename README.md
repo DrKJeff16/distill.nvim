@@ -1,7 +1,7 @@
 # distill.nvim
 
-Fold noisy diagnostics by purpose and severity without changing the rest of
-your folding setup.
+Fold noisy logging, output, tracing, and control diagnostics without replacing
+the rest of your folding setup.
 
 ## Features
 
@@ -26,9 +26,10 @@ your folding setup.
 
 ## Installation
 
-Requires Neovim 0.10+ and `expr`-based folding, usually Treesitter or LSP. The
-plugin composes its folds on top of that base fold expression instead of
-replacing it.
+Requires Neovim 0.10+. Distill can start from Neovim's default manual folding,
+or compose with an existing Treesitter or LSP fold expression without replacing
+its function, class, and block folds. Deliberate `marker`, `indent`, `syntax`,
+and `diff` folding methods are left untouched.
 
 ### With lazy.nvim
 
@@ -55,9 +56,9 @@ replacing it.
 ```
 
 Add each configured language to `ft` so lazy.nvim loads the plugin for that
-filetype. Each language also needs its Treesitter parser installed (for example
-with `:TSInstall rust`); without one the plugin falls back to a line-based
-heuristic that handles simple, single-call-per-line cases.
+filetype. A Treesitter parser is recommended for accurate multi-line detection
+(for example, install one with `:TSInstall rust`). Without a parser, Distill
+falls back to a line-based heuristic for ordinary `callee(...)` calls.
 
 ## Usage
 
@@ -75,6 +76,26 @@ is written. You can also control them manually:
 | `:DistillConfig`    | Configure groups for the current language interactively. |
 | `:DistillEnable`    | Re-enable and attach to open buffers.                    |
 | `:DistillDisable`   | Disable and restore previous folding.                    |
+
+### Interactive configuration
+
+Run `:DistillConfig` (or press `<leader>dc`) in a supported buffer. The picker
+navigates from family to subgroup to level:
+
+```text
+[on]    logging
+[off]   output
+[mixed] tracing
+```
+
+Select **Toggle all** at any depth to change that entire branch, or select one
+level for a narrow override. Changes refresh visible supported buffers
+immediately. **Reset language overrides** restores the global settings.
+
+The picker uses `vim.ui.select`: Neovim provides a built-in selector, while UI
+plugins such as Telescope, dressing.nvim, or snacks.nvim can render it as a
+floating picker. Interactive choices last for the current Neovim session. Put
+the equivalent `language_groups` values in your setup to persist them.
 
 ### Keybindings
 
@@ -152,12 +173,12 @@ Pass options through `opts` (or `require("distill").setup{}`). Defaults:
 
 - `language_groups` — Per-filetype overrides using the same compact shape. For
   example, `{ python = { output = { print = true, debugger = false } } }`.
-  Interactive changes from `:DistillConfig` are stored here for the current
-  session; **Reset language overrides** returns to the configured globals.
-- `min_lines` — Minimum number of lines a (merged) logging region must span to be
-  folded. `2` skips lone one-line calls by default while still folding adjacent
-  logging calls as a block. Set `1` to fold everything that qualifies, including
-  one-line calls; raise it to fold only larger blocks.
+  Interactive changes from `:DistillConfig` update this table for the current
+  session.
+- `min_lines` — Minimum number of lines a merged detected region must span.
+  `2` skips lone one-line calls by default while still folding adjacent matches
+  as a block. Set `1` to fold every match, including one-line calls; raise it to
+  fold only larger blocks.
 - `base_foldexpr` — The fold expression that produces your general folds. `nil`
   auto-detects native LSP and Treesitter expressions. An unknown custom
   expression is left untouched; set this option to its equivalent
@@ -168,6 +189,24 @@ Pass options through `opts` (or `require("distill").setup{}`). Defaults:
 - `languages` — Per-filetype detection specs, deep-merged over the built-ins.
   Each spec defines Treesitter call node types and hierarchical group rules. See
   [Adding a language](#adding-a-language).
+
+### Migrating from `fold_print`
+
+`fold_print` no longer exists. Its closest replacement is:
+
+```lua
+groups = { output = true }
+```
+
+The new `output` family is broader than the old option: it includes configured
+prints, dumps, stack output, notifications, and debugger calls. To retain a
+narrow print-only setup, enable only that subgroup:
+
+```lua
+groups = {
+  output = { enabled = false, print = true },
+}
+```
 
 ### What gets folded
 
@@ -187,7 +226,7 @@ catalog; individual entries appear as levels in `:DistillConfig`:
 | PHP | PSR-3 levels, generic log, error/syslog calls | formatted print, dumps, backtrace, Xdebug | Sentry capture | assertions |
 | Swift | swift-log/os.Logger levels, NSLog/os_log/DDLog | print/debugPrint/dump and thread stack | signpost events and intervals | assertions, preconditions, fatal errors |
 | Lua | common logger levels | print/io, Neovim dump/notify, traceback, debuggers | — | assert/error/exit |
-| Dart | logging/logger levels and developer log | print, Flutter dumps/stack, developer debugger/inspect | Timeline events/spans | assertions |
+| Dart | logging/logger levels and developer log | print, Flutter dumps/stack, developer debugger/inspect | Timeline events/spans | — |
 
 The catalog intentionally excludes ordinary exceptions, returns, and production
 side effects. Control constructs are opt-in because hiding an assertion, panic,
@@ -206,7 +245,8 @@ Languages are keyed by Neovim filetype. A language spec contains:
 - `call_node_types`: Treesitter node types that represent calls
 - `groups`: `family → subgroup → level → rule`
 - `patterns` on each rule: Lua patterns matched against the called function name
-- `require_args` (optional): ignore calls with an empty argument list
+- `require_args` (optional, on the spec or a rule): ignore calls with an empty
+  argument list
 - `callee` (optional): `function(node, bufnr) -> string|nil` returning the callee
   text for grammars where a call is not a plain call node. Only needed for
   unusual shapes; the built-in extractor handles `function`, `macro`, `method`
@@ -237,6 +277,12 @@ three.
 
 Use `:InspectTree` to find the call node type for a language. Built-in specs are
 deep-merged per key, so a custom level can be added without copying the catalog.
+Its top-level family must also be enabled in `groups` or `language_groups`.
+
+Rules match call-like syntax selected by `call_node_types`; they do not perform
+arbitrary source-text search. The regex fallback likewise recognizes
+`callee(...)` forms, so parser-specific macros, stream expressions, and
+parenthesis-free calls require their Treesitter parser.
 
 ### Tests
 
