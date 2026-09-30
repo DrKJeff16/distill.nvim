@@ -57,6 +57,85 @@ M.defaults = {
 }
 
 M.options = vim.deepcopy(M.defaults)
+M.generation = 0
+
+local function validate_group_tree(tree, name)
+  for key, value in pairs(tree or {}) do
+    if key ~= "enabled" and type(key) ~= "string" then
+      error(("distill: %s keys must be strings"):format(name))
+    end
+    if key == "enabled" and type(value) ~= "boolean" then
+      error(("distill: %s.enabled must be a boolean"):format(name))
+    elseif type(value) == "table" then
+      validate_group_tree(value, name .. "." .. tostring(key))
+    elseif type(value) ~= "boolean" then
+      error(("distill: %s.%s must be a boolean or table"):format(name, tostring(key)))
+    end
+  end
+end
+
+local function validate_patterns(patterns, name)
+  if type(patterns) ~= "table" or #patterns == 0 then
+    error(("distill: %s.patterns must be a non-empty list"):format(name))
+  end
+  for i, pattern in ipairs(patterns) do
+    if type(pattern) ~= "string" or pattern == "" then
+      error(("distill: %s.patterns[%d] must be a non-empty string"):format(name, i))
+    end
+  end
+end
+
+local function validate_languages(languages)
+  for filetype, spec in pairs(languages) do
+    local name = "languages." .. tostring(filetype)
+    if type(filetype) ~= "string" or filetype == "" then
+      error("distill: languages keys must be non-empty strings")
+    elseif spec ~= false and type(spec) ~= "table" then
+      error(("distill: %s must be false or a table"):format(name))
+    elseif type(spec) == "table" then
+      if type(spec.call_node_types) ~= "table" or #spec.call_node_types == 0 then
+        error(("distill: %s.call_node_types must be a non-empty list"):format(name))
+      end
+      for i, node_type in ipairs(spec.call_node_types) do
+        if type(node_type) ~= "string" or node_type == "" then
+          error(("distill: %s.call_node_types[%d] must be a non-empty string"):format(name, i))
+        end
+      end
+      if spec.callee ~= nil and type(spec.callee) ~= "function" then
+        error(("distill: %s.callee must be a function"):format(name))
+      end
+      if spec.require_args ~= nil and type(spec.require_args) ~= "boolean" then
+        error(("distill: %s.require_args must be a boolean"):format(name))
+      end
+      if type(spec.groups) ~= "table" then
+        error(("distill: %s.groups must be a table"):format(name))
+      end
+      for group, subgroups in pairs(spec.groups) do
+        if type(group) ~= "string" or type(subgroups) ~= "table" then
+          error(("distill: %s.groups must contain named subgroup tables"):format(name))
+        end
+        for subgroup, levels in pairs(subgroups) do
+          if type(subgroup) ~= "string" or type(levels) ~= "table" then
+            error(("distill: %s.groups.%s must contain named level tables"):format(name, group))
+          end
+          for level, rule in pairs(levels) do
+            local rule_name = ("%s.groups.%s.%s.%s"):format(name, group, subgroup, tostring(level))
+            if type(level) ~= "string" or type(rule) ~= "table" then
+              error(("distill: %s must be a rule table"):format(rule_name))
+            end
+            validate_patterns(rule.patterns, rule_name)
+            if rule.require_args ~= nil and type(rule.require_args) ~= "boolean" then
+              error(("distill: %s.require_args must be a boolean"):format(rule_name))
+            end
+            if rule.priority ~= nil and type(rule.priority) ~= "number" then
+              error(("distill: %s.priority must be a number"):format(rule_name))
+            end
+          end
+        end
+      end
+    end
+  end
+end
 
 local function validate(opts)
   if type(opts) ~= "table" then
@@ -97,29 +176,22 @@ local function validate(opts)
   if opts.language_groups ~= nil and type(opts.language_groups) ~= "table" then
     error("distill: language_groups must be a table")
   end
-
-  local function validate_group_tree(tree, name)
-    for key, value in pairs(tree or {}) do
-      if key ~= "enabled" and type(key) ~= "string" then
-        error(("distill: %s keys must be strings"):format(name))
-      end
-      if key == "enabled" and type(value) ~= "boolean" then
-        error(("distill: %s.enabled must be a boolean"):format(name))
-      elseif type(value) == "table" then
-        validate_group_tree(value, name .. "." .. tostring(key))
-      elseif type(value) ~= "boolean" then
-        error(("distill: %s.%s must be a boolean or table"):format(name, tostring(key)))
-      end
-    end
-  end
   validate_group_tree(opts.groups, "groups")
-  validate_group_tree(opts.language_groups, "language_groups")
+  for filetype, groups in pairs(opts.language_groups or {}) do
+    if type(filetype) ~= "string" or filetype == "" or type(groups) ~= "table" then
+      error("distill: language_groups must contain per-filetype tables")
+    end
+    validate_group_tree(groups, "language_groups." .. filetype)
+  end
 end
 
 function M.setup(opts)
   opts = opts or {}
   validate(opts)
-  M.options = vim.tbl_deep_extend("force", vim.deepcopy(M.defaults), opts)
+  local merged = vim.tbl_deep_extend("force", vim.deepcopy(M.defaults), opts)
+  validate_languages(merged.languages)
+  M.options = merged
+  M.generation = M.generation + 1
   return M.options
 end
 
@@ -168,10 +240,12 @@ function M.set_group(filetype, path, enabled)
     node = node[key]
   end
   node[path[#path]] = enabled
+  M.generation = M.generation + 1
 end
 
 function M.reset_groups(filetype)
   M.options.language_groups[filetype] = nil
+  M.generation = M.generation + 1
 end
 
 return M

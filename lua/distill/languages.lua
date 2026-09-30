@@ -88,7 +88,7 @@ local python = {
         pretty = rule({ "^pprint$", "^pp$", "^pprint%.pprint$", "^pprint%.pp$" }),
         rich = rule({ "^rich%.print$", "^rich%.print_json$" }),
       },
-      warning = { warnings = rule({ "^warnings%.warn$" }) },
+      warning = { warnings = rule({ "^warnings%.warn$" }, { priority = 100 }) },
       stack = {
         traceback = rule({ "^traceback%.print_" }),
         faulthandler = rule({ "^faulthandler%.dump_traceback", "^faulthandler%.dump_traceback_later$" }),
@@ -126,7 +126,9 @@ local go = {
     output = {
       print = { fmt = rule({ "^fmt%.Print", "^fmt%.Fprint", "^print$", "^println$" }) },
       dump = { spew = rule({ "^spew%.Dump$", "^spew%.Fdump$" }) },
-      stack = { runtime = rule({ "^debug%.PrintStack$", "^runtime/debug%.PrintStack$" }) },
+      stack = {
+        runtime = rule({ "^debug%.PrintStack$", "^runtime/debug%.PrintStack$" }, { require_args = false }),
+      },
       debugger = { runtime = rule({ "^runtime%.Breakpoint$" }, { require_args = false }) },
     },
     control = { panic = { builtin = rule({ "^panic$" }) } },
@@ -149,16 +151,36 @@ local javascript = {
       },
     },
     output = {
-      print = { console = rule({ "^console%.log$", "^console%.dir$", "^console%.table$", "^console%.dirxml$" }) },
+      print = {
+        console = rule(
+          { "^console%.log$", "^console%.dir$", "^console%.table$", "^console%.dirxml$" },
+          { require_args = false }
+        ),
+      },
       diagnostic = {
-        console = rule({ "^console%.assert$", "^console%.count$", "^console%.countReset$", "^process%.emitWarning$" }),
+        console = rule(
+          { "^console%.assert$", "^console%.count$", "^console%.countReset$", "^process%.emitWarning$" },
+          { require_args = false }
+        ),
       },
       report = { process = rule({ "^process%.report%.writeReport$" }, { require_args = false }) },
     },
     tracing = {
-      timing = { console = rule({ "^console%.time$", "^console%.timeLog$", "^console%.timeEnd$" }) },
-      profiling = { console = rule({ "^console%.profile$", "^console%.profileEnd$", "^console%.timeStamp$" }) },
-      groups = { console = rule({ "^console%.group$", "^console%.groupCollapsed$", "^console%.groupEnd$" }) },
+      timing = {
+        console = rule({ "^console%.time$", "^console%.timeLog$", "^console%.timeEnd$" }, { require_args = false }),
+      },
+      profiling = {
+        console = rule(
+          { "^console%.profile$", "^console%.profileEnd$", "^console%.timeStamp$" },
+          { require_args = false }
+        ),
+      },
+      groups = {
+        console = rule(
+          { "^console%.group$", "^console%.groupCollapsed$", "^console%.groupEnd$" },
+          { require_args = false }
+        ),
+      },
     },
   },
 }
@@ -538,7 +560,6 @@ local dart = {
         }, { require_args = false }),
       },
     },
-    control = { assert = { dart = rule(bare({ "assert" })) } },
   },
 }
 

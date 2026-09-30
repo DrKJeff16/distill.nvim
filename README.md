@@ -1,37 +1,30 @@
 # distill.nvim
 
-Fold noisy logging, output, tracing, and control diagnostics without replacing
-the rest of your folding setup.
+Fold logging and debug calls in Neovim while preserving your function, class,
+and block folds.
 
-## Features
+<img width="1822" height="1095" alt="Distill folding diagnostic calls in Neovim" src="https://github.com/user-attachments/assets/c8148518-8c50-49c3-bbf5-2c659513a331" />
 
-<img width="1822" height="1095" alt="Screenshot 2026-06-22 at 10 46 41 AM" src="https://github.com/user-attachments/assets/c8148518-8c50-49c3-bbf5-2c659513a331" />
+Distill finds logging, output, tracing, and control calls, then adds them to your
+existing Neovim folds. It supports Python, Go, JavaScript, TypeScript, Rust,
+C++, Zig, Ruby, Java, PHP, Swift, Lua, and Dart out of the box.
 
-- Automatically closes configured folds when a supported file opens.
-- Folds newly added matching statements on write without re-closing folds
-  you manually opened.
-- Preserves your existing `expr` folds for functions, classes, and blocks.
-- Composes with Treesitter folds, LSP folds, and
+- Keeps function, class, and block folds from Treesitter, LSP, or
   [nvim-origami](https://github.com/chrisgrieser/nvim-origami).
-- Organizes logging, output, tracing, and control-flow diagnostics into
-  language-specific subgroups and levels for Python, Go, JavaScript,
-  TypeScript, Rust, C++, Zig, Ruby, Java, PHP, Swift, Lua, and Dart.
-- Configures every group interactively through `:DistillConfig` or concisely in
-  Lua, globally or per language.
-- Lets you choose the minimum folded region size, so lone one-line calls can stay
-  visible while adjacent logging blocks still fold.
-- Supports custom languages and logging APIs with Lua patterns.
-- Provides commands and a Lua API for folding, unfolding, toggling, refreshing,
-  listing detections, enabling, and disabling.
+- Closes matching diagnostic blocks when a file opens and folds new matches on
+  write without re-closing folds you opened manually.
+- Groups detections by family, subgroup, and level, with global and per-language
+  controls.
+- Provides an interactive picker, commands, keymaps, and a Lua API.
+- Supports custom languages and diagnostic APIs with Lua patterns.
 
-## Installation
+## Requirements and installation
 
-Requires Neovim 0.10+. Distill can start from Neovim's default manual folding,
-or compose with an existing Treesitter or LSP fold expression without replacing
-its function, class, and block folds. Deliberate `marker`, `indent`, `syntax`,
-and `diff` folding methods are left untouched.
+Distill requires Neovim 0.10+. A Treesitter parser is recommended for accurate
+multi-line and language-specific detection. Without one, Distill falls back to
+a line-based heuristic for ordinary `callee(...)` calls.
 
-### With lazy.nvim
+With [lazy.nvim](https://github.com/folke/lazy.nvim):
 
 ```lua
 {
@@ -42,45 +35,54 @@ and `diff` folding methods are left untouched.
     "swift", "lua", "dart",
   },
   cmd = {
-    "DistillFold",
-    "DistillUnfold",
-    "DistillToggle",
-    "DistillRefresh",
-    "DistillList",
-    "DistillConfig",
-    "DistillEnable",
-    "DistillDisable",
+    "DistillFold", "DistillUnfold", "DistillToggle", "DistillRefresh",
+    "DistillList", "DistillConfig", "DistillEnable", "DistillDisable",
   },
   opts = {},
 }
 ```
 
-Add each configured language to `ft` so lazy.nvim loads the plugin for that
-filetype. A Treesitter parser is recommended for accurate multi-line detection
-(for example, install one with `:TSInstall rust`). Without a parser, Distill
-falls back to a line-based heuristic for ordinary `callee(...)` calls.
+Include every language you use in `ft` so lazy.nvim loads Distill for that
+filetype. Install its parser for full detection, for example with
+`:TSInstall rust`.
 
-## Usage
+No folding plugin is required. Distill works with Neovim's default `manual`
+folding and composes with recognized Treesitter and LSP fold expressions. It
+does not attach to `marker`, `indent`, `syntax`, or `diff` folding. Other fold
+expressions require an explicit `base_foldexpr` function. An empty manual-fold
+window is supported; a window that already contains manual folds is left
+untouched so Distill cannot destroy them.
 
-By default, configured folds are created and closed automatically when a
-supported file opens. Newly matching statements are also folded when the file
-is written. You can also control them manually:
+## Quick start
 
-| Command            | Action                                                   |
-| ------------------ | -------------------------------------------------------- |
-| `:DistillFold`      | Close configured folds in the current buffer.            |
-| `:DistillUnfold`    | Open configured folds in the current buffer.             |
-| `:DistillToggle`    | Toggle configured folds in the current buffer.           |
-| `:DistillRefresh`   | Recompute folds after edits.                              |
-| `:DistillList`      | List detected calls in the quickfix window.              |
-| `:DistillConfig`    | Configure groups for the current language interactively. |
-| `:DistillEnable`    | Re-enable and attach to open buffers.                    |
-| `:DistillDisable`   | Disable and restore previous folding.                    |
+Logging folds are enabled by default. Output, tracing, and control diagnostics
+remain visible until you opt in. A detected region must span at least two lines,
+so isolated one-line calls stay open while adjacent calls fold together.
+
+Open a supported file and use:
+
+| Command | Default mapping | Action |
+| --- | --- | --- |
+| `:DistillFold` | `<leader>df` | Close configured folds. |
+| `:DistillUnfold` | `<leader>du` | Open configured folds. |
+| `:DistillToggle` | `<leader>dt` | Toggle configured folds. |
+| `:DistillRefresh` | `<leader>dr` | Recompute folds after edits. |
+| `:DistillList` | `<leader>dl` | List detected calls in quickfix. |
+| `:DistillConfig` | `<leader>dc` | Configure the current language. |
+| `:DistillEnable` | — | Re-enable Distill and attach open buffers. |
+| `:DistillDisable` | — | Disable Distill and restore previous folding. |
+
+Set `keymaps = false` to disable all default mappings, or set an individual
+action to `false` to leave it unmapped. Distill never replaces an existing
+mapping and removes only mappings it installed.
+
+Run `:checkhealth distill` to inspect language support, parser availability,
+and visible-window folding compatibility for every loaded supported buffer.
 
 ### Interactive configuration
 
-Run `:DistillConfig` (or press `<leader>dc`) in a supported buffer. The picker
-navigates from family to subgroup to level:
+Run `:DistillConfig` in a supported buffer. The picker drills from family to
+subgroup to level and shows each branch as `on`, `off`, or `mixed`. For example:
 
 ```text
 [on]    logging
@@ -88,59 +90,45 @@ navigates from family to subgroup to level:
 [mixed] tracing
 ```
 
-Select **Toggle all** at any depth to change that entire branch, or select one
-level for a narrow override. Changes refresh visible supported buffers
-immediately. **Reset language overrides** restores the global settings.
+Open a family or subgroup and select **Toggle all** to change that branch, or
+select an individual level to toggle only that rule. Changes refresh visible
+supported buffers immediately. **Reset language overrides** restores the global
+settings for the current language.
 
-The picker uses `vim.ui.select`: Neovim provides a built-in selector, while UI
-plugins such as Telescope, dressing.nvim, or snacks.nvim can render it as a
-floating picker. Interactive choices last for the current Neovim session. Put
-the equivalent `language_groups` values in your setup to persist them.
-
-### Keybindings
-
-Distill adds these normal-mode mappings by default:
-
-| Mapping       | Action                         |
-| ------------- | ------------------------------ |
-| `<leader>df`  | Close configured folds.        |
-| `<leader>du`  | Open configured folds.         |
-| `<leader>dt`  | Toggle configured folds.       |
-| `<leader>dr`  | Refresh configured folds.      |
-| `<leader>dl`  | List detected statements.      |
-| `<leader>dc`  | Configure this language.       |
-
-Set `keymaps = false` to disable the defaults, or override individual mappings:
-
-```lua
-opts = {
-  keymaps = {
-    toggle = "<leader>l",
-    list = false,
-  },
-}
-```
-
-Distill does not overwrite an existing mapping. Mappings installed by Distill
-are removed by `:DistillDisable` and when `setup()` is called with new mappings.
+The picker uses `vim.ui.select`: Neovim's built-in selector works, and any
+configured replacement supplies its interface. Picker changes last for the
+current Neovim session; reproduce the equivalent settings in `language_groups`
+to persist them.
 
 ## Configuration
 
-Pass options through `opts` (or `require("distill").setup{}`). Defaults:
+Pass only the settings you want to change through lazy.nvim's `opts` or
+`require("distill").setup()`. For example, this also folds output calls:
+
+```lua
+opts = {
+  groups = { output = true },
+}
+```
+
+The default settings are shown below, with the built-in language specs elided:
 
 ```lua
 {
   enable = true,
   auto_fold = true,
+
   groups = {
     logging = true,
     output = false,
     tracing = false,
     control = false,
   },
+
   language_groups = {},
   min_lines = 2,
   base_foldexpr = nil,
+
   keymaps = {
     fold = "<leader>df",
     unfold = "<leader>du",
@@ -149,53 +137,54 @@ Pass options through `opts` (or `require("distill").setup{}`). Defaults:
     list = "<leader>dl",
     config = "<leader>dc",
   },
-  languages = {}, -- merged over the built-in specs below
+
+  languages = {}, -- custom overrides; built-in specs omitted
 }
 ```
 
-- `enable` — Initial state. When `false`, action commands are no-ops and no
-  mappings or folding hooks are activated; `:DistillEnable` remains available.
-- `auto_fold` — Fold configured statements automatically when a supported file
-  opens, and fold newly matching statements when the file is written. When
-  `false`, folds are only created/closed via the commands or the API.
-- `groups` — Global family defaults. Logging is folded by default; output,
-  tracing, assertions, panics, and termination remain visible unless enabled.
-  A table can override a subgroup or level while inheriting the family value:
+Group settings accept booleans or nested overrides. This folds logging except
+its `trace` level, folds output, and leaves debugger calls visible in Python:
 
-  ```lua
+```lua
+opts = {
   groups = {
     logging = { enabled = true, levels = { trace = false } },
-    output = { enabled = false, print = true },
+    output = true,
     tracing = false,
     control = false,
-  }
-  ```
+  },
+  language_groups = {
+    python = {
+      output = { debugger = false },
+    },
+  },
+}
+```
 
-- `language_groups` — Per-filetype overrides using the same compact shape. For
-  example, `{ python = { output = { print = true, debugger = false } } }`.
-  Interactive changes from `:DistillConfig` update this table for the current
-  session.
-- `min_lines` — Minimum number of lines a merged detected region must span.
-  `2` skips lone one-line calls by default while still folding adjacent matches
-  as a block. Set `1` to fold every match, including one-line calls; raise it to
-  fold only larger blocks.
-- `base_foldexpr` — The fold expression that produces your general folds. `nil`
-  auto-detects native LSP and Treesitter expressions. An unknown custom
-  expression is left untouched; set this option to its equivalent
-  `function(lnum)` to compose it with Distill, e.g.
-  `base_foldexpr = vim.lsp.foldexpr`.
-- `keymaps` — Normal-mode mappings for the commands above. Set to `false` to
-  disable all defaults, or set an individual action to `false` to disable it.
-- `languages` — Per-filetype detection specs, deep-merged over the built-ins.
-  Each spec defines Treesitter call node types and hierarchical group rules. See
-  [Adding a language](#adding-a-language).
+Within a table, `enabled` supplies the fallback value and more specific entries
+override it. Per-filetype settings take precedence over global settings.
 
-### What gets folded
+| Option | Purpose |
+| --- | --- |
+| `enable` | Initial state. When false, folding hooks and mappings remain inactive; `:DistillEnable` is still available. |
+| `auto_fold` | Fold on file open and fold new matches on write. When false, use commands or the API. |
+| `groups` | Global family, subgroup, and level settings. |
+| `language_groups` | Per-filetype overrides using the same compact shape as `groups`. |
+| `min_lines` | Minimum merged region length. Use `1` to fold isolated one-line calls. |
+| `base_foldexpr` | General fold expression to compose with. `nil` detects native LSP and Treesitter expressions. |
+| `keymaps` | Default normal-mode mappings. Use `false` globally or for one action. |
+| `languages` | Detection specs deep-merged over the built-in languages. |
 
-Detection is chosen by the buffer's `filetype`. This is the complete built-in
-catalog; individual entries appear as levels in `:DistillConfig`:
+`base_foldexpr` must be a `function(lnum) -> foldexpr value`. Distill calls it
+for general folds and layers configured diagnostic folds on top.
 
-| Filetype | `logging` (default on) | `output` (default off) | `tracing` (default off) | `control` (default off) |
+## Language catalog
+
+Detection follows the buffer's `filetype`. The table summarizes every built-in
+language. Use `:DistillConfig` to browse its exact family, subgroup, and level
+names.
+
+| Filetype | `logging` (on) | `output` (off) | `tracing` (off) | `control` (off) |
 | --- | --- | --- | --- | --- |
 | Python | debug/info/warning/error/critical/exception/success/generic logger methods | `print`, pprint, Rich output, warnings, traceback/faulthandler, breakpoint/pdb | — | process exit/abort calls |
 | Go | trace/debug/info/warning/error/fatal, zerolog messages, stdlib/test logging | fmt/builtin print, spew dump, stack, breakpoint | — | `panic` |
@@ -210,40 +199,31 @@ catalog; individual entries appear as levels in `:DistillConfig`:
 | Lua | common logger levels | print/io, Neovim dump/notify, traceback, debuggers | — | assert/error/exit |
 | Dart | logging/logger levels and developer log | print, Flutter dumps/stack, developer debugger/inspect | Timeline events/spans | — |
 
-The catalog intentionally excludes ordinary exceptions, returns, and production
-side effects. Control constructs are opt-in because hiding an assertion, panic,
-or termination call can obscure behavior rather than merely reduce noise.
+Detection matches call syntax and callee names, not program semantics. Control
+rules are opt-in because hiding assertions, exception-raising calls, panics, or
+termination can obscure important behavior.
 
-Logging patterns match on the method name, so `logging.info(...)`,
-`logger.debug(...)` and `self.logger.warning(...)` all fold, while setup calls
-such as `logging.basicConfig(...)` and `logging.getLogger(...)` never do. Calls
-with no arguments are ignored for Go, JavaScript/TypeScript, C++, Zig, and PHP,
-so accessors like Go's `err.Error()` are not mistaken for log calls.
+Logging patterns match the method name, so `logging.info(...)`,
+`logger.debug(...)`, and `self.logger.warning(...)` all fold. Setup calls such
+as `logging.basicConfig(...)` and `logging.getLogger(...)` do not. Go,
+JavaScript/TypeScript, C++, Zig, and PHP reject empty calls by default, so
+accessors such as Go's `err.Error()` are not mistaken for logs. Rules for APIs
+that are meaningful without arguments, such as `console.timeEnd()`, override
+that language default.
 
-### Adding a language
+## Adding a language or API
 
-Languages are keyed by Neovim filetype. A language spec contains:
-
-- `call_node_types`: Treesitter node types that represent calls
-- `groups`: `family → subgroup → level → rule`
-- `patterns` on each rule: Lua patterns matched against the called function name
-- `require_args` (optional, on the spec or a rule): ignore calls with an empty
-  argument list
-- `callee` (optional): `function(node, bufnr) -> string|nil` returning the callee
-  text for grammars where a call is not a plain call node. Only needed for
-  unusual shapes; the built-in extractor handles `function`, `macro`, `method`
-  and `name` fields (see `lua/distill/callee.lua`, which also has the C++
-  stream and Dart implementations).
+Language specs use Neovim filetypes and a
+`family → subgroup → level → rule` hierarchy:
 
 ```lua
 opts = {
   languages = {
     go = {
-      call_node_types = { "call_expression" },
       groups = {
         logging = {
           levels = {
-            info = { patterns = { "%.Info$", "^log%.Print" } },
+            audit = { patterns = { "^audit%.Record$" } },
           },
         },
       },
@@ -252,53 +232,68 @@ opts = {
 }
 ```
 
-Patterns match the callee text, not the full source line. For example,
-`"%.Info$"` matches `log.Info(...)` and `logger.Info(...)`. Member accessors keep
-their source separator (`.`, `::`, `->`), so use `"[%.:>]info$"` to match all
-three.
+Spec fields include:
 
-Use `:InspectTree` to find the call node type for a language. Built-in specs are
-deep-merged per key, so a custom level can be added without copying the catalog.
-Its top-level family must also be enabled in `groups` or `language_groups`.
+- `call_node_types`: Treesitter nodes representing calls.
+- `groups`: the hierarchical detection rules.
+- `require_args`: optional rejection of empty calls for the whole language.
+- `callee`: optional `function(node, bufnr) -> string|nil` extractor for unusual
+  grammar shapes. The built-in extractor already handles `function`, `macro`,
+  `method`, and `name` fields.
 
-Rules match call-like syntax selected by `call_node_types`; they do not perform
-arbitrary source-text search. The regex fallback likewise recognizes
-`callee(...)` forms, so parser-specific macros, stream expressions, and
-parenthesis-free calls require their Treesitter parser.
+Each rule contains `patterns`, a list of Lua patterns matched against the callee
+rather than the whole line. A rule can also set its own `require_args` value and
+numeric `priority`; higher-priority matches classify a call before broader
+rules, even when that specific group is disabled.
 
-### Tests
+For example, `"%.Info$"` matches both `log.Info(...)` and `logger.Info(...)`.
+Member accessors retain `.`, `::`, or `->`; use `"[%.:>]info$"` when all three
+should match.
 
-```sh
-nvim --headless -u NORC -c "luafile tests/run.lua"        # Python + folding behavior
-nvim --headless -u NORC -c "luafile tests/languages.lua"  # every built-in language
-nvim --headless -u NORC -c "luafile tests/lifecycle.lua"  # config + restore behavior
-```
+Specs are deep-merged by key. Adding a new level preserves existing rules;
+assigning an existing rule's `patterns` replaces its entire pattern list.
+Ensure the new rule is enabled through `groups` or `language_groups`.
 
-`tests/languages.lua` skips a language whose parser is not installed. Set
-`DISTILL_PARSERS` to a directory of `<lang>.so` files to test parsers
-outside your runtimepath.
+A new filetype also needs `call_node_types`, a corresponding lazy.nvim `ft`
+entry, and usually a Treesitter parser. Use `:InspectTree` to find its call node
+types.
 
-Run `:checkhealth distill` to inspect the current buffer's language support,
-parser availability, and folding compatibility.
+The conservative fallback recognizes ordinary `callee(...)` and parenthesized
+`name!(...)` forms while ignoring common strings and comments. Stream
+expressions, parenthesis-free calls, and other grammar-specific syntax require
+Treesitter.
 
 ## API
 
 ```lua
-local fl = require("distill")
+local distill = require("distill")
 
-fl.setup(opts)    -- configure (lazy does this via `opts`)
-fl.fold(bufnr)    -- close configured folds (bufnr optional, defaults to current)
-fl.unfold(bufnr)  -- open configured folds
-fl.toggle(bufnr)  -- toggle
-fl.refresh(bufnr) -- recompute
-fl.list(bufnr)    -- quickfix list of detections
-fl.config(bufnr)  -- open the group picker
-fl.detect(bufnr)  -- regions include group, subgroup, and level metadata
-fl.enable()       -- re-enable at runtime
-fl.disable()      -- disable and restore folding
+distill.setup(opts)    -- lazy.nvim calls this through `opts`
+distill.fold(bufnr)    -- bufnr is optional and defaults to the current buffer
+distill.unfold(bufnr)
+distill.toggle(bufnr)
+distill.refresh(bufnr)
+distill.list(bufnr)    -- populate quickfix with detections
+distill.config(bufnr)  -- open the group picker
+distill.detect(bufnr)  -- enabled detections with group/subgroup/level metadata
+distill.enable()
+distill.disable()
 ```
 
-## Contributing
+`detect()` returns matches before adjacent regions are merged and before
+`min_lines` is applied.
+
+## Health and development
+
+```sh
+nvim --headless -u NORC -c "luafile tests/run.lua"        # folding behavior
+nvim --headless -u NORC -c "luafile tests/languages.lua"  # language catalog
+nvim --headless -u NORC -c "luafile tests/lifecycle.lua"  # setup and restore
+```
+
+`tests/languages.lua` skips languages without an installed parser. Set
+`DISTILL_PARSERS` to a directory of `<lang>.so` files to test parsers outside
+your runtimepath.
 
 Issues and pull requests are welcome.
 

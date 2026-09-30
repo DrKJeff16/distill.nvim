@@ -15,11 +15,21 @@ local actions = {
 }
 local installed_keymaps = {}
 
+local function safely(context, callback)
+  local ok, err = xpcall(callback, debug.traceback)
+  if not ok then
+    fold.report_error(context, err)
+  end
+  return ok
+end
+
 local function clear_keymaps()
-  for lhs, rhs in pairs(installed_keymaps) do
-    local current = vim.fn.maparg(lhs, "n", false, true)
-    if current.rhs == rhs then
-      pcall(vim.keymap.del, "n", lhs)
+  for lhs, installed in pairs(installed_keymaps) do
+    for _, current in ipairs(vim.api.nvim_get_keymap("n")) do
+      if current.lhsraw == installed.lhsraw and current.rhs == installed.rhs and current.desc == installed.desc then
+        pcall(vim.api.nvim_del_keymap, "n", installed.lhsraw or lhs)
+        break
+      end
     end
   end
   installed_keymaps = {}
@@ -34,9 +44,15 @@ local function install_keymaps()
     if mapping and spec then
       local rhs = "<cmd>" .. spec.command .. "<cr>"
       local current = vim.fn.maparg(mapping, "n", false, true)
-      if current.rhs == nil or current.rhs == "" then
+      if next(current) == nil then
         vim.keymap.set("n", mapping, rhs, { desc = spec.desc, silent = true })
-        installed_keymaps[mapping] = rhs
+        local created = vim.fn.maparg(mapping, "n", false, true)
+        for _, global in ipairs(vim.api.nvim_get_keymap("n")) do
+          if global.lhsraw == created.lhsraw and global.desc == spec.desc then
+            installed_keymaps[mapping] = { lhsraw = global.lhsraw, rhs = global.rhs, desc = global.desc }
+            break
+          end
+        end
       end
     end
   end
@@ -53,9 +69,6 @@ local function on_open(buf, win)
   if not config.options.enable or not vim.api.nvim_buf_is_valid(buf) or not supported(buf) then
     return
   end
-  if vim.b[buf].distill_skip then -- already determined unsupported; stay quiet
-    return
-  end
   win = win or fold.window_for(buf)
   if not win or not vim.api.nvim_win_is_valid(win) or vim.api.nvim_win_get_buf(win) ~= buf then
     return
@@ -64,12 +77,15 @@ local function on_open(buf, win)
     return
   end
   local state = fold._states[win]
-  if config.options.auto_fold and not state.autofolded then
-    state.autofolded = true
+  fold.restore(buf, win)
+  if config.options.auto_fold and not state.session.autofolded then
+    state.session.autofolded = true
     vim.schedule(function()
       if vim.api.nvim_win_is_valid(win) and vim.api.nvim_win_get_buf(win) == buf and config.options.enable then
         vim.api.nvim_win_call(win, function()
-          pcall(fold.close, buf)
+          safely("automatic fold failed", function()
+            fold.close(buf)
+          end)
         end)
       end
     end)
@@ -89,7 +105,9 @@ local function on_write(buf)
     if vim.api.nvim_buf_is_valid(buf) and config.options.enable and config.options.auto_fold then
       for _, win in ipairs(fold.windows_for(buf)) do
         vim.api.nvim_win_call(win, function()
-          pcall(fold.close_new, buf)
+          safely("write-time fold failed", function()
+            fold.close_new(buf)
+          end)
         end)
       end
     end
@@ -99,6 +117,7 @@ end
 function M.setup(opts)
   config.setup(opts)
   fold.detach_all()
+  fold.reset_errors()
   clear_keymaps()
 
   local group = vim.api.nvim_create_augroup("Distill", { clear = true })
@@ -123,6 +142,13 @@ function M.setup(opts)
     vim.api.nvim_create_autocmd("FileType", { group = group, pattern = fts, callback = schedule_open })
   end
   vim.api.nvim_create_autocmd("BufWinEnter", { group = group, callback = schedule_open })
+  vim.api.nvim_create_autocmd("WinEnter", { group = group, callback = schedule_open })
+  vim.api.nvim_create_autocmd({ "BufLeave", "BufWinLeave" }, {
+    group = group,
+    callback = function(a)
+      fold.detach_window(vim.api.nvim_get_current_win(), a.buf)
+    end,
+  })
   -- Re-arm the one-shot auto-fold on every (re)load of the file.
   vim.api.nvim_create_autocmd("BufReadPost", {
     group = group,
@@ -141,16 +167,9 @@ function M.setup(opts)
     callback = function(a)
       -- Folding providers commonly change foldexpr on these events. Run after
       -- their synchronous handlers, then compose Distill over the new provider.
-      vim.b[a.buf].distill_skip = false
       vim.schedule(function()
         for _, win in ipairs(fold.windows_for(a.buf)) do
           on_open(a.buf, win)
-          local state = fold._states[win]
-          if state and state.bufnr == a.buf and state.closed then
-            vim.api.nvim_win_call(win, function()
-              pcall(fold.refresh, a.buf)
-            end)
-          end
         end
       end)
     end,
@@ -159,6 +178,12 @@ function M.setup(opts)
     group = group,
     callback = function(a)
       fold.forget_window(a.match)
+    end,
+  })
+  vim.api.nvim_create_autocmd("BufWipeout", {
+    group = group,
+    callback = function(a)
+      fold.forget_buffer(a.buf)
     end,
   })
 
@@ -207,7 +232,7 @@ function M.enable()
   for _, w in ipairs(vim.api.nvim_list_wins()) do
     local b = vim.api.nvim_win_get_buf(w)
     if supported(b) then
-      fold.ensure_attached(b, w)
+      on_open(b, w)
     end
   end
 end

@@ -25,11 +25,15 @@ local function fail(msg)
 end
 
 local function load_parser(lang)
-  if vim.treesitter.language.add(lang) then
+  local ok = pcall(vim.treesitter.language.add, lang)
+  if ok and pcall(vim.treesitter.query.parse, lang, "(_) @node") then
     return true
   end
   local dir = vim.env.DISTILL_PARSERS
-  return dir ~= nil and vim.treesitter.language.add(lang, { path = ("%s/%s.so"):format(dir, lang) }) ~= nil
+  if not dir then
+    return false
+  end
+  return pcall(vim.treesitter.language.add, lang, { path = ("%s/%s.so"):format(dir, lang) })
 end
 
 local function sorted_keys(set)

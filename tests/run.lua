@@ -215,5 +215,61 @@ check(
   vim.inspect(go_fallback)
 )
 
+-- Strings and comments cannot manufacture calls or extend a real call across
+-- unrelated executable lines.
+vim.api.nvim_buf_set_lines(fbuf, 0, -1, false, {
+  'logger.info("(")',
+  "do_work()",
+  '# logger.warning("comment")',
+  'value = "logger.error(inside string)"',
+  'logger.error("real") // trailing ) comment',
+})
+local safe_fallback = fb(fbuf, detect._effective_spec(config.options.languages.python, "python"))
+check(
+  "fallback: ignores calls and parentheses in strings/comments",
+  #safe_fallback == 2
+    and safe_fallback[1].start == 1
+    and safe_fallback[1]["end"] == 1
+    and safe_fallback[2].start == 5
+    and safe_fallback[2]["end"] == 5,
+  vim.inspect(safe_fallback)
+)
+
+-- Explicit false values override a language-wide require_args=true default.
+config.options.groups.output = true
+vim.api.nvim_buf_set_lines(fbuf, 0, -1, false, { "runtime.Breakpoint()", "debug.PrintStack()", "err.Error()" })
+go_fallback = fb(fbuf, detect._effective_spec(config.options.languages.go, "go"))
+check(
+  "require_args=false: detects argument-optional Go calls",
+  #go_fallback == 2 and go_fallback[1].start == 1 and go_fallback[2].start == 2,
+  vim.inspect(go_fallback)
+)
+
+config.options.groups.tracing = true
+vim.api.nvim_buf_set_lines(fbuf, 0, -1, false, { "console.groupEnd()" })
+local js_fallback = fb(fbuf, detect._effective_spec(config.options.languages.javascript, "javascript"))
+check("require_args=false: detects zero-argument console tracing", #js_fallback == 1, vim.inspect(js_fallback))
+config.options.groups.tracing = false
+
+-- A known high-priority API keeps its family classification even when that
+-- family is disabled, rather than falling through to a broad logger method.
+vim.api.nvim_buf_set_lines(fbuf, 0, -1, false, { 'warnings.warn("x")' })
+config.options.groups.output = false
+local warning_off = fb(fbuf, detect._effective_spec(config.options.languages.python, "python"))
+config.options.groups.output = true
+local warning_on = fb(fbuf, detect._effective_spec(config.options.languages.python, "python"))
+check("precedence: disabled output warning does not become logging", #warning_off == 0, vim.inspect(warning_off))
+check(
+  "precedence: warnings.warn has stable output metadata",
+  #warning_on == 1 and warning_on[1].group == "output" and warning_on[1].subgroup == "warning",
+  vim.inspect(warning_on)
+)
+
+local union = detect._normalize({
+  { start = 1, ["end"] = 3, text = "first" },
+  { start = 3, ["end"] = 5, text = "second" },
+})
+check("normalize: partially overlapping regions retain their union", #union == 1 and union[1]["end"] == 5, vim.inspect(union))
+
 print(("\n%d failure(s)"):format(failures))
 vim.cmd((failures == 0) and "qa!" or "cq!")

@@ -21,7 +21,8 @@ Distill requires Neovim 0.10 or newer. With lazy.nvim:
 <
 Add every configured filetype to `ft`. Distill uses Treesitter when available
 and a line-based detector otherwise. Run `:checkhealth distill` to inspect the
-current buffer's parser and folding configuration.
+parser and visible-window folding configuration of every loaded supported
+buffer.
 
 ==============================================================================
 COMMANDS                                                        *distill-commands*
@@ -109,6 +110,8 @@ Pass options to `require("distill").setup()` or a plugin manager's `opts`:
 `base_foldexpr`      Lua `function(lnum)` producing the underlying fold level.
                      Native LSP and Treesitter expressions are detected. Supply
                      this option for any other custom fold expression.
+                     Empty manual-fold windows are supported. Windows that
+                     already contain manual folds are left untouched.
 
 `keymaps`            Default normal mappings. Use false to disable all, or set
                      one action to false. Existing user mappings are never
@@ -118,6 +121,12 @@ Pass options to `require("distill").setup()` or a plugin manager's `opts`:
                      `call_node_types`, hierarchical `groups`, optional
                      `require_args`, and optional `callee`. Group rules live at
                      `family -> subgroup -> level` and contain `patterns`.
+                     Rules may override `require_args` and set a numeric
+                     `priority`; higher values classify before broader rules.
+
+Without a parser, conservative line-based detection recognizes ordinary
+`callee(...)` and parenthesized `name!(...)` forms while ignoring common
+strings and comments. Grammar-specific syntax requires Treesitter.
 
 The built-in families are:
 
@@ -132,7 +141,7 @@ The built-in families are:
 `control`            Assertions, panics, traps, and termination. Disabled by
                      default because hiding these may obscure program behavior.
 
-See the README's "What gets folded" table for the full per-language catalog.
+See the README's "Language catalog" table for the full per-language catalog.
 
 ==============================================================================
 LUA API                                                          *distill-api*
